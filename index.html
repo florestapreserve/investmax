@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v3 \u00b7 16/08 21:58";</script>
+<script>window.__APPVER__ = "investmax-v4 \u00b7 16/08 22:15";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -6444,7 +6444,7 @@ Pages.config = {
           if (s1 !== s2) { toast('As senhas não são iguais.', 'err'); return; }
           try {
             const cif = await cifrarBackup(S, s1);
-            baixarArquivo(cif, 'InvestMax-backup-' + hoje() + '.eijson', 'application/octet-stream');
+            baixarArquivo(cif, 'InvestMax-backup-' + hoje() + '-cifrado.json', 'application/json');
             closeModal(); toast('🔒 Backup cifrado baixado — só abre com essa senha');
           } catch (e) { toast('Não consegui cifrar: ' + esc(e.message), 'err'); }
         };
