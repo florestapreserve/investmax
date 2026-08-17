@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v4 \u00b7 16/08 22:15";</script>
+<script>window.__APPVER__ = "investmax-v5 \u00b7 16/08 22:22";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -184,6 +184,24 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .tbl tbody tr.click:hover { background: rgba(11,11,11,.03); }
 .tbl .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tbl tfoot td { font-weight: 650; border-top: 1px solid var(--line); }
+/* 📣 Avisos de hoje no celular: cada aviso vira um bloco empilhado (sem rolagem lateral; botões grandes que quebram sozinhos) */
+@media (max-width: 640px) {
+  #card-avisos .tbl-wrap { overflow-x: visible; }
+  #card-avisos table.tbl, #card-avisos table.tbl tbody { display: block; width: 100%; }
+  #card-avisos table.tbl tr {
+    display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: start;
+    padding: 12px 2px; border-bottom: 1px solid var(--line);
+  }
+  #card-avisos table.tbl tr:last-child { border-bottom: 0; }
+  #card-avisos table.tbl td {
+    display: block; width: auto !important; padding: 0 !important; border: 0 !important;
+    text-align: left !important; white-space: normal !important; vertical-align: top;
+  }
+  #card-avisos table.tbl td:nth-child(1) { font-size: 18px; line-height: 1.2; }
+  #card-avisos table.tbl td:nth-child(3) { grid-column: 1 / -1; margin-top: 6px; }
+  #card-avisos table.tbl td:nth-child(4) { grid-column: 1 / -1; margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; }
+  #card-avisos table.tbl td:nth-child(4) .btn-sm { flex: 1 1 auto; min-width: 0; padding: 9px 10px; font-size: 13px; }
+}
 
 /* ---------- chips ---------- */
 .chip {
