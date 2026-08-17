@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v5 \u00b7 16/08 22:22";</script>
+<script>window.__APPVER__ = "investmax-v6 \u00b7 16/08 22:31";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -6408,6 +6408,10 @@ Pages.config = {
       </div>`;
     } else {
       corpo = `<div class="grid g2">
+        <div class="card"><div class="card-title">🔄 Versão do app</div>
+          <p class="small muted mb">Versão instalada: <b>${window.__APPVER__ || '—'}</b></p>
+          <div class="row"><button class="btn btn-primary" id="btn-atualizar">🔄 Buscar atualização</button></div>
+          <p class="small muted mt">Procura a versão mais nova publicada e recarrega o app. Só precisa de internet neste momento.</p></div>
         <div class="card"><div class="card-title">🗄️ Seus dados agora</div>
           <div class="tbl-wrap"><table class="tbl"><tbody>
             <tr><td>Clientes</td><td class="num">${S.clientes.length}</td></tr>
@@ -6434,6 +6438,26 @@ Pages.config = {
       ${corpo}`;
 
     el.querySelectorAll('#abas-cfg button').forEach(b => b.onclick = () => { UI.abaConfig = b.getAttribute('data-aba'); renderApp(); });
+
+    /* buscar atualização (força o service worker a pegar a versão mais nova) */
+    const btnUp = el.querySelector('#btn-atualizar');
+    if (btnUp) btnUp.onclick = async () => {
+      btnUp.disabled = true; btnUp.textContent = '🔄 Verificando…';
+      let temNova = false;
+      try {
+        if ('serviceWorker' in navigator) {
+          const reg = await navigator.serviceWorker.getRegistration();
+          if (reg) { await reg.update(); temNova = !!(reg.installing || reg.waiting) || !!window.__recarregando; }
+        }
+      } catch (e) {}
+      if (temNova) {
+        toast('⬇️ Nova versão encontrada — atualizando…');
+        setTimeout(() => { if (!window.__recarregando) { window.__recarregando = true; location.reload(); } }, 1500);
+      } else {
+        btnUp.disabled = false; btnUp.textContent = '🔄 Buscar atualização';
+        toast('✅ Você já está na versão mais recente.');
+      }
+    };
 
     /* backup */
     const baixarArquivo = (conteudo, nome, tipo) => {
