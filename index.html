@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v6 \u00b7 16/08 22:31";</script>
+<script>window.__APPVER__ = "investmax-v7 \u00b7 18/08 16:21";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -6412,6 +6412,15 @@ Pages.config = {
           <p class="small muted mb">Versão instalada: <b>${window.__APPVER__ || '—'}</b></p>
           <div class="row"><button class="btn btn-primary" id="btn-atualizar">🔄 Buscar atualização</button></div>
           <p class="small muted mt">Procura a versão mais nova publicada e recarrega o app. Só precisa de internet neste momento.</p></div>
+        ${window.Trava ? `<div class="card"><div class="card-title">🔒 Bloqueio automático</div>
+          <p class="small muted mb">Depois de quanto tempo <b>fora do app</b> (ou parado) ele pede a senha de novo. Trocar de app rapidinho não bloqueia. <i>Ao abrir o app do zero, sempre pede.</i></p>
+          <select id="cfg-autolock" style="width:100%">
+            <option value="1">Depois de 1 minuto</option>
+            <option value="5">Depois de 5 minutos</option>
+            <option value="15">Depois de 15 minutos</option>
+            <option value="60">Depois de 1 hora</option>
+            <option value="0">Só ao abrir o app (não pede ao voltar)</option>
+          </select></div>` : ''}
         <div class="card"><div class="card-title">🗄️ Seus dados agora</div>
           <div class="tbl-wrap"><table class="tbl"><tbody>
             <tr><td>Clientes</td><td class="num">${S.clientes.length}</td></tr>
@@ -6458,6 +6467,13 @@ Pages.config = {
         toast('✅ Você já está na versão mais recente.');
       }
     };
+
+    /* bloqueio automático (tempo fora/parado antes de pedir a senha) */
+    const selAL = el.querySelector('#cfg-autolock');
+    if (selAL) {
+      selAL.value = String(S.config.autoLockMin != null ? S.config.autoLockMin : 5);
+      selAL.onchange = () => { S.config.autoLockMin = +selAL.value; Store.save(); toast('🔒 Bloqueio automático atualizado.'); };
+    }
 
     /* backup */
     const baixarArquivo = (conteudo, nome, tipo) => {
@@ -6627,7 +6643,8 @@ Pages.config = {
 (function () {
   const LS_PIN = 'investmax_pin';
   const LS_OCIOSO = 'investmax_travado_ocioso';
-  const IDLE_MS = 5 * 60 * 1000; // 5 min parado → tranca de novo
+  // quanto tempo fora/parado antes de pedir a senha de novo — vem de S.config.autoLockMin (0 = só ao abrir o app). Padrão 5 min.
+  function autoLockMs() { var m = 5; try { if (typeof S !== 'undefined' && S && S.config && S.config.autoLockMin != null) m = +S.config.autoLockMin; } catch (e) {} return m > 0 ? m * 60000 : 0; }
 
   const enc = new TextEncoder();
   function hexToBytes(h) { return Uint8Array.from(h.match(/.{2}/g).map(b => parseInt(b, 16))); }
@@ -6647,13 +6664,21 @@ Pages.config = {
       if (!lerPin()) this.renderCriar(); else this.renderEntrar();
     },
     _armarOcioso() {
-      const reset = () => { clearTimeout(this._t); this._t = setTimeout(() => this._trancar(), IDLE_MS); };
-      ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'].forEach(ev => document.addEventListener(ev, reset, { passive: true }));
-      document.addEventListener('visibilitychange', () => { if (document.hidden) this._trancar(); });
+      if (this._armado) return; this._armado = true;
+      const self = this;
+      const reset = () => { clearTimeout(self._t); const ms = autoLockMs(); if (ms) self._t = setTimeout(() => self._trancar(), ms); };
+      ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'].forEach(ev => document.addEventListener(ev, reset, { passive: true }));
+      // NÃO tranca só por sair do app: marca a hora ao esconder; ao voltar, tranca apenas se ficou fora além do tempo configurado (trocas rápidas passam direto)
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) { self._hiddenAt = Date.now(); return; }
+        const ms = autoLockMs();
+        if (ms && self._hiddenAt && (Date.now() - self._hiddenAt) > ms) { self._trancar(); return; }
+        self._hiddenAt = null; reset();
+      });
       reset();
     },
     _trancar() { try { localStorage.setItem(LS_OCIOSO, '1'); } catch (e) {} location.reload(); },
-    _abrir() { this._armarOcioso(); this._onUnlock(); },
+    _abrir() { this._onUnlock(); this._armarOcioso(); },
     _card(inner) {
       document.getElementById('app').innerHTML =
         `<div class="login-wrap"><div class="login-card">
