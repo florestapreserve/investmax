@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v8 \u00b7 21/09 09:19";</script>
+<script>window.__APPVER__ = "investmax-v9 \u00b7 21/09 09:21";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -853,7 +853,7 @@ function clientesOrdenados() {
 }
 /* ---------- LGPD: exibição de nomes (completo · iniciais tipo W.D.S · nº da conta). Só EXIBIÇÃO — o dado salvo continua completo. ---------- */
 function iniciaisLGPD(nome) { const ws = String(nome || '').trim().split(/\s+/).filter(w => w && !/^(de|da|do|das|dos|e)$/i.test(w)); return ws.map(w => w[0].toUpperCase()).join('.') || '—'; }
-function _lgpdModo() { return (S.config && S.config.lgpdNomes) || 'completo'; }
+function _lgpdModo() { return ((typeof S !== 'undefined' && S && S.config && S.config.lgpdNomes)) || 'completo'; }
 function nomeMasc(nome) { return _lgpdModo() === 'completo' ? (nome || '—') : iniciaisLGPD(nome); } // quando só se tem a string do nome
 function nomeExib(p) { // pessoa inteira (cliente com contas, ou lead)
   if (!p) return '—';
