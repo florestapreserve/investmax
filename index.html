@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v7 \u00b7 18/08 16:21";</script>
+<script>window.__APPVER__ = "investmax-v8 \u00b7 21/09 09:19";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -851,9 +851,20 @@ function patrimonioTotal() { return somar(S.clientes, clientePatrimonio); }
 function clientesOrdenados() {
   return [...S.clientes].sort((a, b) => clientePatrimonio(b) - clientePatrimonio(a));
 }
-function nomeRef(obj) { // captação/alocação: nome do cliente vinculado ou nome livre
+/* ---------- LGPD: exibição de nomes (completo · iniciais tipo W.D.S · nº da conta). Só EXIBIÇÃO — o dado salvo continua completo. ---------- */
+function iniciaisLGPD(nome) { const ws = String(nome || '').trim().split(/\s+/).filter(w => w && !/^(de|da|do|das|dos|e)$/i.test(w)); return ws.map(w => w[0].toUpperCase()).join('.') || '—'; }
+function _lgpdModo() { return (S.config && S.config.lgpdNomes) || 'completo'; }
+function nomeMasc(nome) { return _lgpdModo() === 'completo' ? (nome || '—') : iniciaisLGPD(nome); } // quando só se tem a string do nome
+function nomeExib(p) { // pessoa inteira (cliente com contas, ou lead)
+  if (!p) return '—';
+  const m = _lgpdModo();
+  if (m === 'completo') return p.nome || '—';
+  if (m === 'conta') { const ct = (p.contas && p.contas.length ? String(p.contas[0].numero || '').trim() : ''); return ct && ct !== '—' ? 'conta ' + ct : iniciaisLGPD(p.nome); }
+  return iniciaisLGPD(p.nome);
+}
+function nomeRef(obj) { // captação/alocação: nome do cliente vinculado ou nome livre (respeita LGPD)
   const c = obj.clienteId && getCliente(obj.clienteId);
-  return c ? c.nome : (obj.nomeLivre || obj.nome || '—');
+  return c ? nomeExib(c) : nomeMasc(obj.nomeLivre || obj.nome || '—');
 }
 function iniciais(nome) {
   const p = String(nome || '?').trim().split(/\s+/);
@@ -1181,12 +1192,18 @@ function receitaMensalPosicao(pos, mk) { // receita REALIZADA: mês futuro ainda
   if (mk > mesAtual()) return 0;
   return receitaMensalPosicaoProjetada(pos, mk);
 }
-function receitaRecorrenteNoMes(mk) { return somar(S.recorrentes, p => receitaMensalPosicao(p, mk)); }
+/* Clínica Financeira: receita marcada com clinica=true entra na "Receita Global", NÃO na receita do assessor.
+   filtro: 'assessor' = só NÃO-clínica · 'global' = só clínica · undefined = tudo (soma das duas) */
+function _ehClinica(x) { return !!(x && x.clinica); }
+function _passaClinica(x, filtro) { return !filtro || ((filtro === 'global') === _ehClinica(x)); }
+function receitaRecorrenteNoMes(mk, filtro) { return somar(S.recorrentes.filter(p => _passaClinica(p, filtro)), p => receitaMensalPosicao(p, mk)); }
 function receitaRecorrenteProjetadaNoMes(mk) { return somar(S.recorrentes, p => receitaMensalPosicaoProjetada(p, mk)); }
-function receitaCabecaNoMes(mk) {
-  return somar(alocacoesDoMes(mk).filter(a => a.classe && (a.tipoReceita || 'cabeca') === 'cabeca'), a => a.receita);
+function receitaCabecaNoMes(mk, filtro) {
+  return somar(alocacoesDoMes(mk).filter(a => a.classe && (a.tipoReceita || 'cabeca') === 'cabeca' && _passaClinica(a, filtro)), a => a.receita);
 }
-function receitaNoMes(mk) { return receitaCabecaNoMes(mk) + receitaRecorrenteNoMes(mk); }
+function receitaNoMes(mk, filtro) { return receitaCabecaNoMes(mk, filtro) + receitaRecorrenteNoMes(mk, filtro); }
+function receitaAssessorNoMes(mk) { return receitaNoMes(mk, 'assessor'); }  // o que é do assessor (entra no repasse)
+function receitaGlobalNoMes(mk) { return receitaNoMes(mk, 'global'); }      // Clínica Financeira
 function aportesRecorrentesDoMes(mk) { // movimentos de entrada em fundos no mês (contam como "alocado")
   const out = [];
   for (const p of S.recorrentes)
@@ -1931,7 +1948,7 @@ function modalRegistrarContato(clienteId, canalDefault, aoSalvar) {
   const areas = areasPendenciaLista();
   openModal({
     wide: true,
-    title: '💬 Registrar contato — ' + esc(c.nome),
+    title: '💬 Registrar contato — ' + esc(nomeExib(c)),
     body: `<div class="form-grid">
       ${selectFld({ id: 'canal', label: 'Canal', value: canalDefault || 'whatsapp', options: CANAIS.map(k => [k.id, k.ico + ' ' + k.nome]) })}
       ${inputFld({ id: 'data', label: 'Data', type: 'date', value: hoje() })}
@@ -2063,7 +2080,7 @@ Pages.dashboard = {
   render(el) {
     const mk = UI.mesRef;
     const meta = metaDoMes(mk);
-    const captado = captadoNoMes(mk), receita = receitaNoMes(mk);
+    const captado = captadoNoMes(mk), receita = receitaAssessorNoMes(mk);
     const avisos = avisosDoDia();
     const avisosPend = avisos.filter(a => a.status === 'pendente');
     const patTotal = patrimonioTotal();
@@ -2124,7 +2141,7 @@ Pages.dashboard = {
     const evolucao = meses.map(m => ({
       label: fmtMes(m).replace(' 20', '/'),
       valor: captadoNoMes(m),
-      sub: 'meta ' + fmtCompact(metaDoMes(m).captacao) + ' · receita ' + fmtBRLc(receitaNoMes(m)),
+      sub: 'meta ' + fmtCompact(metaDoMes(m).captacao) + ' · receita ' + fmtBRLc(receitaAssessorNoMes(m)),
       cor: m === mk ? 'var(--s1)' : 'var(--accent-strong)',
       destaque: m === mk,
     }));
@@ -2140,7 +2157,7 @@ Pages.dashboard = {
     const top5 = ordenados.slice(0, 5);
     const resto = somar(ordenados.slice(5), clientePatrimonio);
     const CORES = ['var(--s1)', 'var(--s5)', 'var(--s7)', 'var(--s3)', 'var(--s4)'];
-    const donutItems = top5.map((c, i) => ({ label: c.nome.split(' ')[0] + ' ' + (c.nome.split(' ').slice(-1)[0] || '')[0] + '.', valor: clientePatrimonio(c), cor: CORES[i] }))
+    const donutItems = top5.map((c, i) => ({ label: (_lgpdModo() === 'completo' ? c.nome.split(' ')[0] + ' ' + (c.nome.split(' ').slice(-1)[0] || '')[0] + '.' : nomeExib(c)), valor: clientePatrimonio(c), cor: CORES[i] }))
       .concat(resto > 0 ? [{ label: 'Demais ' + (ordenados.length - 5), valor: resto, cor: 'var(--surface3)' }] : []);
     // denominador é só a soma dos positivos (nunca deixa passar de 100% se algum saldo estiver negativo)
     const patPositivo = somar(ordenados, clientePatrimonio);
@@ -2175,7 +2192,7 @@ Pages.dashboard = {
             : '<span class="chip chip-n">🚫 Recusado</span>';
           return `<tr ${st !== 'pendente' ? 'style="opacity:.55"' : ''}>
             <td style="width:28px">${a.ico}</td>
-            <td><b>${esc(a.nome)}</b><div class="small muted">${esc(a.det)}${a.resolucao && a.resolucao.obs ? ' · ' + esc(a.resolucao.obs) : ''}</div></td>
+            <td><b>${esc(nomeMasc(a.nome))}</b><div class="small muted">${esc(a.det)}${a.resolucao && a.resolucao.obs ? ' · ' + esc(a.resolucao.obs) : ''}</div></td>
             <td class="center">${chipSt}</td>
             <td class="right" style="white-space:nowrap">${st === 'pendente' ? `
               <button class="btn btn-sm" data-av-acao="realizado" data-av="${esc(a.chave)}">✅ Realizado</button>
@@ -2194,9 +2211,9 @@ Pages.dashboard = {
           ${meterHTML(captado, meta.captacao, { fmt: fmtCompact })}
           ${projCap ? `<div class="kpi-sub">Projeção do ritmo atual: <b class="${projCap >= meta.captacao ? 'up' : 'down'}">${fmtCompact(projCap)}</b></div>` : ''}</div>
         <div class="card kpi" id="dash-kpi-rec" style="cursor:pointer" title="Clique para ver todas as receitas por cliente e por data">
-          <div class="kpi-label">📈 Receita — ${esc(fmtMes(mk))} <span style="float:right">›</span></div>
+          <div class="kpi-label">📈 Receita (sua) — ${esc(fmtMes(mk))} <span style="float:right">›</span></div>
           <div class="kpi-value" style="font-size:24px">${fmtBRLc(receita)}</div>
-          <div class="kpi-sub">⚡ ${fmtBRLc(receitaCabecaNoMes(mk))} pontual · 🔁 ${fmtBRLc(receitaRecorrenteNoMes(mk))} recorrente</div>
+          <div class="kpi-sub">⚡ ${fmtBRLc(receitaCabecaNoMes(mk, 'assessor'))} pontual · 🔁 ${fmtBRLc(receitaRecorrenteNoMes(mk, 'assessor'))} recorrente${receitaGlobalNoMes(mk) ? ' · 🏥 ' + fmtBRLc(receitaGlobalNoMes(mk)) + ' global' : ''}</div>
           ${meterHTML(receita, meta.receita, { fmt: fmtBRLc })}</div>
         ${(() => { // mesma anatomia dos outros cartões: label · valor · contexto · barra · linha da barra
           const repMin = S.config.repasseMin || 38, repMax = S.config.repasseMax || 45;
@@ -2230,7 +2247,7 @@ Pages.dashboard = {
           ${criticos.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>${criticos.slice(0, 6).map(x => `
             <tr class="click" data-cli="${x.c.id}">
               <td>${chipRegua(x.r.nota)}</td>
-              <td><b>${esc(nomeCurto(x.c.nome))}</b></td>
+              <td><b>${esc(nomeCurto(nomeExib(x.c)))}</b></td>
               <td class="num">${fmtCompact(x.pat)}</td>
               <td class="small muted num">${x.r.data ? x.r.dias + 'd sem contato' : 'nunca contatado'}</td>
               <td class="right"><button class="btn btn-sm" data-contato="${x.c.id}">💬</button></td>
@@ -2240,19 +2257,19 @@ Pages.dashboard = {
           <div class="card"><div class="card-title">🎂 Aniversários — próximos 30 dias</div>
             ${nivers.length ? `<div class="pill-row">${nivers.slice(0, 8).map(x => `
               <span class="chip ${x.aniv.dias <= 3 ? 'chip-acc' : 'chip-tag'}" style="cursor:pointer;padding:5px 11px" data-cli-chip="${x.c.id}">
-                ${x.aniv.dias === 0 ? '🎉 HOJE' : fmtDateShort(x.aniv.data)} · ${esc(nomeCurto(x.c.nome))}${idade(x.c.aniversario) != null ? ' (' + (idade(x.c.aniversario) + (x.aniv.dias > 0 ? 1 : 0)) + ')' : ''}</span>`).join('')}</div>`
+                ${x.aniv.dias === 0 ? '🎉 HOJE' : fmtDateShort(x.aniv.data)} · ${esc(nomeCurto(nomeExib(x.c)))}${idade(x.c.aniversario) != null ? ' (' + (idade(x.c.aniversario) + (x.aniv.dias > 0 ? 1 : 0)) + ')' : ''}</span>`).join('')}</div>`
             : '<div class="muted small">Nenhum aniversário nos próximos 30 dias.</div>'}</div>
           <div class="card"><div class="card-title">📅 Próximas reuniões <span class="spacer"></span><a href="#/reunioes" class="small">agenda ›</a></div>
             ${reunioesProx.length ? reunioesProx.slice(0, 4).map(r => `
               <div class="row" style="padding:4px 0"><span class="mono small muted">${fmtDateShort(r.data)}</span>
-                <b class="small">${esc(r.clienteId ? (getCliente(r.clienteId) || {}).nome || r.nome : r.nome)}</b>
+                <b class="small">${esc(nomeMasc(r.clienteId ? (getCliente(r.clienteId) || {}).nome || r.nome : r.nome))}</b>
                 <span class="small muted">· ${esc(rotuloReuniao(r))} ${r.modalidade ? '· ' + esc(r.modalidade) : ''}</span></div>`).join('')
             : '<div class="muted small">Nenhuma reunião marcada para os próximos 7 dias.</div>'}</div>
           <div class="card"><div class="card-title">📞 Retornos de conta <span class="spacer"></span><a href="#/reunioes" class="small">reuniões ›</a></div>
             ${retornos.length ? retornos.slice(0, 6).map(r => `
               <div class="row click" style="padding:4px 0;cursor:pointer" data-retorno="${r.tipo}:${r.id}">
                 <span class="chip ${r.data < h ? 'chip-x' : r.data === h ? 'chip-c' : 'chip-acc'}">${r.data < h ? 'atrasado' : r.data === h ? 'HOJE' : fmtDateShort(r.data)}</span>
-                <b class="small">${esc(r.nome)}</b>
+                <b class="small">${esc(nomeMasc(r.nome))}</b>
                 <span class="small muted">· ${esc(r.det)}</span></div>`).join('')
             : '<div class="muted small">Nenhum retorno agendado. Marque "Retornar em" na reunião ou no lead.</div>'}</div>
         </div>
@@ -2265,7 +2282,7 @@ Pages.dashboard = {
             <span class="spacer"></span><a href="#/pipeline" class="small">pipeline ›</a></div>
           ${cobrar.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>${cobrar.slice(0, 6).map(x => `
             <tr class="click" data-lead="${x.l.id}">
-              <td><b>${esc(x.l.nome)}</b><div class="small muted">${esc(etapaInfo(x.l.etapa).nome)}${x.l.origem ? ' · ' + esc(x.l.origem) : ''}</div></td>
+              <td><b>${esc(nomeExib(x.l))}</b><div class="small muted">${esc(etapaInfo(x.l.etapa).nome)}${x.l.origem ? ' · ' + esc(x.l.origem) : ''}</div></td>
               <td class="num">${x.l.potencial ? fmtCompact(x.l.potencial) : '—'}</td>
               <td class="num"><span class="chip ${x.dias > 21 ? 'chip-x' : x.dias > 14 ? 'chip-d' : 'chip-c'}">${x.dias === 999 ? 'sem atividade' : x.dias + 'd parado'}</span></td>
             </tr>`).join('')}</tbody></table></div>` : '<div class="empty">✅ Nenhum lead esquecido.</div>'}
@@ -2299,7 +2316,7 @@ Pages.dashboard = {
     const kpiCap = el.querySelector('#dash-kpi-cap');
     if (kpiCap) kpiCap.onclick = () => { UI.abaProducao = 'captacao'; nav('producao'); };
     const kpiRec = el.querySelector('#dash-kpi-rec');
-    if (kpiRec) kpiRec.onclick = () => { UI.abaProducao = 'receita'; nav('producao'); };
+    if (kpiRec) kpiRec.onclick = () => modalReceitaSplit(mk);
     const kpiReu = el.querySelector('#dash-kpi-reu');
     if (kpiReu) kpiReu.onclick = () => nav('reunioes');
     const editRep = el.querySelector('#edit-repasse');
@@ -2336,7 +2353,7 @@ function modalResolverAviso(av, status) {
   const areasP = areasPendenciaLista();
   openModal({
     wide: true,
-    title: `${rotulos[status]} — ${esc(av.nome)}`,
+    title: `${rotulos[status]} — ${esc(nomeMasc(av.nome))}`,
     body: `<p class="small muted" style="margin-top:0">${av.ico} ${esc(av.det)}</p>
       <div class="form-grid">
       ${precisaData ? inputFld({ id: 'novaData', label: 'Nova data', type: 'date', full: true, hint: 'a partir de amanhã — se ainda é para hoje, deixe pendente e dê baixa quando fizer' }) : ''}
@@ -2479,6 +2496,22 @@ function aplicarBaixaAviso(av, status, f) {
   });
 }
 
+/* 📈 clique na Receita do dashboard: mostra Assessor + Global (Clínica Financeira) + soma */
+function modalReceitaSplit(mk) {
+  const ass = receitaAssessorNoMes(mk), glob = receitaGlobalNoMes(mk), soma = ass + glob;
+  openModal({
+    title: '📈 Receita — ' + fmtMes(mk),
+    body: `<div class="tbl-wrap"><table class="tbl"><tbody>
+      <tr><td>👤 <b>Receita assessor</b><div class="small muted">o que é seu — entra no repasse</div></td><td class="num" style="font-size:19px">${fmtBRLc(ass)}</td></tr>
+      <tr><td>🏥 <b>Receita global</b><div class="small muted">Clínica Financeira — não entra no seu repasse</div></td><td class="num" style="font-size:19px">${fmtBRLc(glob)}</td></tr>
+      <tr style="border-top:2px solid var(--line)"><td><b>Σ Soma das duas</b></td><td class="num" style="font-size:21px"><b>${fmtBRLc(soma)}</b></td></tr>
+    </tbody></table></div>
+    <p class="small muted mt">Marque "🏥 Clínica Financeira" ao lançar/editar uma receita (Produção) pra ela cair na Global. O dashboard mostra só a sua receita de assessor.</p>`,
+    footer: `<span class="spacer"></span><button class="btn" onclick="closeModal()">Fechar</button><button class="btn btn-primary" data-act="prod">Ver na Produção</button>`,
+    onOpen(el) { const b = el.querySelector('[data-act="prod"]'); if (b) b.onclick = () => { closeModal(); UI.abaProducao = 'receita'; nav('producao'); }; },
+  });
+}
+
 /* 💵 faixa do repasse: % mínima e máxima sobre a receita do mês */
 function modalFaixaRepasse() {
   openModal({
@@ -2599,7 +2632,7 @@ Pages.regua = {
       }).join(' ');
       return `<tr class="click" data-cli="${c.id}">
         <td><div class="row"><span class="avatar ${c.tipo === 'PJ' ? 'pj' : ''}">${esc(iniciais(c.nome))}</span>
-          <div><b>${esc(c.nome)}</b>${l.aniv ? ` <span class="bday" title="Aniversário ${fmtDate(l.aniv.data)}">🎂 ${l.aniv.dias === 0 ? 'HOJE!' : 'em ' + l.aniv.dias + 'd'}</span>` : ''}
+          <div><b>${esc(nomeExib(c))}</b>${l.aniv ? ` <span class="bday" title="Aniversário ${fmtDate(l.aniv.data)}">🎂 ${l.aniv.dias === 0 ? 'HOJE!' : 'em ' + l.aniv.dias + 'd'}</span>` : ''}
           <div class="small muted">${esc(c.perfil || '—')}${c.tipoInvestidor ? ' · ' + esc(c.tipoInvestidor) : ''}</div></div></div></td>
         <td class="num">${fmtBRL(l.pat)}</td>
         <td class="center">${chipDias(l.uc.dias, canal, canal ? 'Meta deste canal: até ' + slaCanal(canal) + ' dias' : '')}</td>
@@ -2742,7 +2775,7 @@ function modalConta(clienteId, idx) {
   const c = getCliente(clienteId);
   const ct = idx != null ? c.contas[idx] : null;
   openModal({
-    title: ct ? '✏️ Editar conta' : '➕ Nova conta — ' + esc(c.nome),
+    title: ct ? '✏️ Editar conta' : '➕ Nova conta — ' + esc(nomeExib(c)),
     body: `<div class="form-grid">
       ${inputFld({ id: 'numero', label: 'Nº da conta', value: ct ? ct.numero : '' })}
       ${moneyFld({ id: 'patrimonio', label: 'Patrimônio (R$)', value: ct ? ct.patrimonio : '' })}
@@ -2760,7 +2793,7 @@ function modalConta(clienteId, idx) {
         closeModal(); Store.commit();
       };
       const rem = el.querySelector('[data-act="rem"]');
-      if (rem) rem.onclick = () => confirmar('Remover conta', `Remover a conta <b>${esc(ct.numero)}</b> de ${esc(c.nome)}? O patrimônio dela sai do total.`, () => {
+      if (rem) rem.onclick = () => confirmar('Remover conta', `Remover a conta <b>${esc(ct.numero)}</b> de ${esc(nomeExib(c))}? O patrimônio dela sai do total.`, () => {
         c.contas.splice(idx, 1); closeAllModals(); Store.commit();
       }, { danger: true, okLabel: 'Remover' });
     },
@@ -2773,7 +2806,7 @@ function modalLembrete(clienteId, id) {
   const lb = id ? (S.lembretes || []).find(x => x.id === id) : null;
   const classes = classesAvisoLista();
   openModal({
-    title: lb ? '✏️ Editar aviso — ' + esc(c.nome) : '🔔 Novo aviso — ' + esc(c.nome),
+    title: lb ? '✏️ Editar aviso — ' + esc(nomeExib(c)) : '🔔 Novo aviso — ' + esc(nomeExib(c)),
     body: `<div class="form-grid">
       ${selectFld({ id: 'classe', label: 'Classificação', value: lb ? lb.classe : (classes[0] || ''), options: [...classes, ['__nova', '➕ Nova classificação…']] })}
       <div data-sub="nova" style="display:none">${inputFld({ id: 'novaClasse', label: 'Nome da classificação', placeholder: 'ex.: Renovação de contrato' })}</div>
@@ -2833,7 +2866,7 @@ Pages.clientes = {
       const aniv = c.aniversario ? proximoAniversario(c.aniversario) : null;
       return `<tr class="click" data-cli="${c.id}">
         <td><div class="row"><span class="avatar ${c.tipo === 'PJ' ? 'pj' : ''}">${esc(iniciais(c.nome))}</span>
-          <div><b>${esc(c.nome)}</b>
+          <div><b>${esc(nomeExib(c))}</b>
           <div class="small muted">${c.tipo === 'PJ' ? 'Empresa' : (c.sexo === 'F' ? 'Pessoa física · F' : 'Pessoa física · M')}${aniv && aniv.dias <= 15 ? ' · <span class="bday">🎂 ' + (aniv.dias === 0 ? 'hoje!' : fmtDateShort(aniv.data)) + '</span>' : ''}</div></div></div></td>
         <td>${esc(c.perfil || '—')}</td>
         <td>${esc(c.tipoInvestidor || '—')}</td>
@@ -3178,7 +3211,7 @@ function renderCliente360(el, id) {
     <div class="row mb"><a href="#/clientes">‹ Clientes</a></div>
     <div class="page-head">
       <span class="avatar ${c.tipo === 'PJ' ? 'pj' : ''}" style="width:52px;height:52px;font-size:18px">${esc(iniciais(c.nome))}</span>
-      <div><h2 style="font-size:20px">${esc(c.nome)}</h2>
+      <div><h2 style="font-size:20px">${esc(nomeExib(c))}</h2>
         <div class="sub">${c.tipo === 'PJ' ? '🏢 Empresa' : '👤 Pessoa física'}
           ${c.perfil ? ' · ' + esc(c.perfil) : ''}${c.tipoInvestidor ? ' · ' + esc(c.tipoInvestidor) : ''}
           ${anos != null ? ' · ' + anos + ' anos' : ''}
@@ -3312,7 +3345,7 @@ function renderCliente360(el, id) {
     el.querySelector('#obs-status').textContent = '✓ Salvo ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   }, 600);
   el.querySelector('#del-cli').onclick = () => {
-    confirmar('Excluir cliente', `Excluir <b>${esc(c.nome)}</b>? O histórico de captações/alocações fica guardado sem vínculo. Esta ação não pode ser desfeita (a não ser restaurando um backup).`, () => {
+    confirmar('Excluir cliente', `Excluir <b>${esc(nomeExib(c))}</b>? O histórico de captações/alocações fica guardado sem vínculo. Esta ação não pode ser desfeita (a não ser restaurando um backup).`, () => {
       const snapOk = Store.takeSnapshot('Antes de excluir cliente ' + c.nome);
       S.clientes = S.clientes.filter(x => x.id !== id);
       S.contatos = S.contatos.filter(x => x.clienteId !== id);
@@ -3358,7 +3391,7 @@ function modalLead(id, prefill) { // prefill: {eventoId, origem, evento} — usa
 
   openModal({
     wide: true,
-    title: novo ? '➕ Novo lead' : '🎯 ' + esc(l.nome),
+    title: novo ? '➕ Novo lead' : '🎯 ' + esc(nomeExib(l)),
     body: `<div class="grid g2" style="gap:20px"><div>
       <div class="form-grid">
         ${inputFld({ id: 'nome', label: 'Nome', value: l ? l.nome : '', full: true })}
@@ -3556,7 +3589,7 @@ function modalLead(id, prefill) { // prefill: {eventoId, origem, evento} — usa
         Store.save(); closeModal(); modalLead(id); toast('Anotado ✓');
       };
       const del = el.querySelector('[data-act="del"]');
-      if (del) del.onclick = () => confirmar('Excluir lead', `Excluir <b>${esc(l.nome)}</b> definitivamente? (Se só recusou, prefira mover para "Recusou" — os números de conversão continuam contando a história.)`, () => {
+      if (del) del.onclick = () => confirmar('Excluir lead', `Excluir <b>${esc(nomeExib(l))}</b> definitivamente? (Se só recusou, prefira mover para "Recusou" — os números de conversão continuam contando a história.)`, () => {
         S.leads = S.leads.filter(x => x.id !== l.id);
         closeAllModals(); toast('Lead excluído'); Store.commit();
       }, { danger: true, okLabel: 'Excluir' });
@@ -3571,7 +3604,7 @@ function modalLead(id, prefill) { // prefill: {eventoId, origem, evento} — usa
           nav('clientes/' + l.clienteId); Store.commit();
           return;
         }
-        confirmar('🏆 Virou cliente!', `Criar o cadastro de cliente para <b>${esc(l.nome)}</b>? O lead vai para a coluna "Virou cliente" e o histórico fica guardado.`, () => {
+        confirmar('🏆 Virou cliente!', `Criar o cadastro de cliente para <b>${esc(nomeExib(l))}</b>? O lead vai para a coluna "Virou cliente" e o histórico fica guardado.`, () => {
           const c = {
             id: uid('c'), nome: l.nome, tipo: /ltda|s\/a|group|me$|empresa|assoc/i.test(foldTxt(l.nome)) ? 'PJ' : 'PF',
             sexo: l.sexo || null, perfil: null, tipoInvestidor: null, aniversario: null,
@@ -3728,7 +3761,7 @@ Pages.pipeline = {
         const diasParado = ult ? diasEntre(ult, hoje()) : null;
         const alerta = diasParado != null && diasParado > 7 && !['convertido', 'perdido', 'descartado'].includes(l.etapa);
         return `<div class="kb-card" draggable="true" data-lead="${l.id}">
-          <b>${esc(l.nome)}</b>
+          <b>${esc(nomeExib(l))}</b>
           ${l.empresa || l.cargo ? `<div class="small muted">${esc([l.cargo, l.empresa].filter(Boolean).join(' · '))}</div>` : ''}
           <div class="meta">
             ${l.potencial ? `<span class="mono" style="color:var(--ink2)">${esc(fmtCompact(l.potencial))}</span>` : ''}
@@ -3851,7 +3884,7 @@ function salvarReceitaRecorrente(d, aoTerminar, aoCancelar) { // d: {data, clien
         id: uid('rec'), clienteId: d.clienteId || null,
         nomeLivre: d.clienteId ? null : d.nomeLivre,
         ativo: d.ativo || null, produto: d.produto, emissor: d.emissor || null, classe: d.classe || 'Fundos', taxaAa: d.taxaAa,
-        inicio: d.data, encerradaEm: null, obs: '',
+        clinica: !!d.clinica, inicio: d.data, encerradaEm: null, obs: '',
         movimentos: [{ id: uid('mv'), data: d.data, valor: d.valor }],
       };
       S.recorrentes.push(nova);
@@ -3986,6 +4019,7 @@ function modalAlocacao(id, tipoInicial) {
           <button class="${tipo === 'cabeca' ? 'active' : ''}" data-tipo="cabeca" style="flex:1">⚡ Pontual (na cabeça) — entra na hora</button>
           <button class="${tipo === 'recorrente' ? 'active' : ''}" data-tipo="recorrente" style="flex:1">🔁 Recorrente — pinga todo mês</button>
         </div>${al ? '<div class="hint">lançou errado? dá pra <b>corrigir de pontual para recorrente</b> aqui (o lançamento pontual é apagado e vira um fundo recorrente)</div>' : ''}</div>
+      <label class="row" style="cursor:pointer;user-select:none;margin:0 0 12px"><input type="checkbox" data-f="clinica" ${al && al.clinica ? 'checked' : ''}> <b>🏥 Receita da Clínica Financeira</b> <span class="small muted">— entra na Receita Global, não na sua receita de assessor</span></label>
       <div class="form-grid">
         ${inputFld({ id: 'data', label: 'Data da aplicação', type: 'date', value: al ? al.data : hoje() })}
         <div class="fld"><label>Cliente</label><select data-f="clienteId">${clienteOptions(al ? al.clienteId : '')}</select></div>
@@ -4045,6 +4079,7 @@ function modalAlocacao(id, tipoInicial) {
 
       $('[data-act="salvar"]').onclick = () => {
         const f = readForm(el);
+        const clinica = !!(el.querySelector('[data-f="clinica"]') || {}).checked;
         const valor = parseValor(f.valor);
         if (!f.data || isNaN(valor) || valor <= 0) { toast('Preencha data e valor válidos.', 'err'); return; }
         if (tipo === 'recorrente') {
@@ -4053,7 +4088,7 @@ function modalAlocacao(id, tipoInicial) {
           if (!f.produto) { toast('Informe o nome do fundo/produto.', 'err'); return; }
           if (!f.clienteId && !f.nomeLivre) { toast('Escolha o cliente ou informe um nome.', 'err'); return; }
           salvarReceitaRecorrente(
-            { data: f.data, clienteId: f.clienteId || null, nomeLivre: f.nomeLivre, ativo: f.ativo || null, produto: f.produto, emissor: f.emissor || null, classe: f.classe || null, valor, taxaAa: taxaAa / 100 },
+            { data: f.data, clienteId: f.clienteId || null, nomeLivre: f.nomeLivre, ativo: f.ativo || null, produto: f.produto, emissor: f.emissor || null, classe: f.classe || null, valor, taxaAa: taxaAa / 100, clinica },
             () => { // sucesso: se estava editando um PONTUAL, apaga ele (virou recorrente)
               if (al) { S.alocacoes = S.alocacoes.filter(x => x.id !== al.id); toast('✅ Corrigido: virou receita recorrente'); }
               closeAllModals(); UI.abaProducao = 'receita'; Store.commit();
@@ -4072,7 +4107,7 @@ function modalAlocacao(id, tipoInicial) {
           taxa: taxa != null && isNaN(taxa) ? null : taxa, roa: al ? al.roa : null,
           vencimento: f.vencimento || null,
           receitaPct: receitaPct != null && isNaN(receitaPct) ? null : receitaPct,
-          receita, tipoReceita: 'cabeca',
+          receita, tipoReceita: 'cabeca', clinica,
         };
         if (al) Object.assign(al, dados);
         else S.alocacoes.push({ id: uid('al'), ...dados });
@@ -4135,6 +4170,7 @@ function modalRecorrente(posId) {
       ${inputFld({ id: 'taxaAa', label: 'Receita (% ao ano)', value: pctBR(pos.taxaAa), hint: pos.taxaAa ? '= ' + pctBR(pos.taxaAa / 12) + '%/mês' : '' })}
       ${textareaFld({ id: 'obs', label: 'Observações', value: pos.obs || '' })}
     </div>
+    <label class="row" style="cursor:pointer;user-select:none;margin-top:4px"><input type="checkbox" data-f="clinica" ${pos.clinica ? 'checked' : ''}> <b>🏥 Receita da Clínica Financeira</b> <span class="small muted">— entra na Receita Global</span></label>
     ${datalistAtivos()}${datalistEmissores()}
     <div class="card-title mt">Movimentos</div>
     <div class="tbl-wrap" style="max-height:220px;overflow-y:auto"><table class="tbl"><tbody>
@@ -4155,6 +4191,7 @@ function modalRecorrente(posId) {
         if (!f.produto || isNaN(taxaAa) || taxaAa <= 0) { toast('Produto e taxa % ao ano são obrigatórios.', 'err'); return false;
         }
         Object.assign(pos, { ativo: f.ativo || null, produto: f.produto, emissor: f.emissor || null, clienteId: f.clienteId || null, taxaAa: taxaAa / 100, obs: f.obs || '' });
+        pos.clinica = !!(el.querySelector('[data-f="clinica"]') || {}).checked;
         return true;
       };
       el.querySelector('[data-act="aporte"]').onclick = () => { if (!aplicarForm()) return; Store.save(); closeModal(); modalMovimento(pos.id, 1); };
@@ -4796,7 +4833,7 @@ function renderReceita(mk) {
       <th>Data</th><th>Cliente</th><th>Produto</th><th class="right">Valor aplicado</th><th class="right">Receita no período</th>
     </tr></thead><tbody>${linhas.map(l => `<tr class="click" data-rec-item="${l.chave}">
       <td class="mono small">${l.dataTxt}</td>
-      <td><b>${esc(l.nome)}</b></td>
+      <td><b>${esc(nomeExib(l))}</b></td>
       <td>${esc(l.produto)}${l.semClasse ? ' <span class="chip chip-d" title="Sem classe, não conta no total">⚠ sem classe</span>' : ''}</td>
       <td class="num">${fmtBRL(l.aplicado)}</td>
       <td class="num"><b>${l.receitaTxt}</b></td></tr>`).join('') || `<tr><td colspan="5">${emptyState('📈', 'Nenhuma receita neste filtro.')}</td></tr>`}</tbody>
@@ -5642,7 +5679,7 @@ function renderEvento360(el, id) {
       <div class="tbl-wrap"><table class="tbl"><thead><tr>
         <th>Pessoa</th><th>Empresa</th><th class="center">Temperatura</th><th>Interesses</th><th>Contatos</th><th class="right">Potencial</th><th>Funil</th><th>Reunião</th><th>Retorno</th>
       </tr></thead><tbody>${leads.map(l => `<tr class="click" data-lead-abrir="${l.id}">
-        <td><b>${esc(l.nome)}</b>${l.cargo ? `<div class="small muted">${esc(l.cargo)}</div>` : ''}</td>
+        <td><b>${esc(nomeExib(l))}</b>${l.cargo ? `<div class="small muted">${esc(l.cargo)}</div>` : ''}</td>
         <td class="small">${esc(l.empresa || '—')}${l.segmento ? `<div class="small muted">${esc(l.segmento)}</div>` : ''}</td>
         <td class="center">${l.temperatura ? chipTemp(l.temperatura) : '<span class="muted small">—</span>'}</td>
         <td class="small">${leadInteresses(l).length ? leadInteresses(l).map(i => `<span class="chip chip-acc" style="font-size:10.5px">${esc(i)}</span>`).join(' ') : '<span class="muted">—</span>'}</td>
@@ -5669,7 +5706,7 @@ Pages.eventos = {
       const conv = st.total > 0 ? st.convertidos / st.total : 0;
       const leadsHTML = st.leads.slice(0, 8).map(l =>
         `<span class="chip ${l.etapa === 'convertido' ? 'chip-a' : ['perdido', 'descartado'].includes(l.etapa) ? 'chip-n' : 'chip-tag'}"
-          style="cursor:pointer" data-lead-go="${l.id}" title="${esc(etapaInfo(l.etapa).nome)}">${esc(l.nome)}</span>`).join('') +
+          style="cursor:pointer" data-lead-go="${l.id}" title="${esc(etapaInfo(l.etapa).nome)}">${esc(nomeExib(l))}</span>`).join('') +
         (st.leads.length > 8 ? `<span class="chip chip-n">+${st.leads.length - 8}</span>` : '');
       return `<div class="card" data-ev-abrir="${ev.id}" style="cursor:pointer" title="Clique para ver todos os detalhes do evento">
         <div class="card-title" style="font-size:15px;color:var(--ink)">🎪 ${esc(ev.nome)}
@@ -6320,7 +6357,7 @@ function wizardCaptacoes(wb) {
             <th></th><th>Data</th><th>Nome</th><th>Vínculo</th><th class="right">Valor</th><th></th></tr></thead>
           <tbody>${linhas.map((l, i) => `<tr>
             <td><input type="checkbox" data-imp="${i}" ${l.dup ? '' : 'checked'}></td>
-            <td class="mono">${fmtDate(l.data)}</td><td>${esc(l.nome)}</td>
+            <td class="mono">${fmtDate(l.data)}</td><td>${esc(nomeExib(l))}</td>
             <td class="small ${l.cliId ? 'dim' : 'muted'}">${l.cliId ? '👥 ' + esc((getCliente(l.cliId) || {}).nome) : 'sem vínculo'}</td>
             <td class="num">${fmtBRLc(l.valor)}</td>
             <td>${l.dup ? '<span class="chip chip-c">já existe</span>' : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Nenhuma linha válida.</td></tr>'}</tbody></table></div></div>`;
@@ -6421,6 +6458,13 @@ Pages.config = {
             <option value="60">Depois de 1 hora</option>
             <option value="0">Só ao abrir o app (não pede ao voltar)</option>
           </select></div>` : ''}
+        <div class="card"><div class="card-title">🔒 Privacidade dos nomes (LGPD)</div>
+          <p class="small muted mb">Como os nomes de clientes/leads aparecem nas telas. O dado completo continua salvo — isto é só exibição (bom pra mostrar a tela pra outra pessoa).</p>
+          <select id="cfg-lgpd" style="width:100%">
+            <option value="completo">Nome completo</option>
+            <option value="iniciais">Iniciais (ex.: W.D.S)</option>
+            <option value="conta">Nº da conta do cliente (iniciais quando não tiver)</option>
+          </select></div>
         <div class="card"><div class="card-title">🗄️ Seus dados agora</div>
           <div class="tbl-wrap"><table class="tbl"><tbody>
             <tr><td>Clientes</td><td class="num">${S.clientes.length}</td></tr>
@@ -6473,6 +6517,13 @@ Pages.config = {
     if (selAL) {
       selAL.value = String(S.config.autoLockMin != null ? S.config.autoLockMin : 5);
       selAL.onchange = () => { S.config.autoLockMin = +selAL.value; Store.save(); toast('🔒 Bloqueio automático atualizado.'); };
+    }
+
+    /* privacidade dos nomes (LGPD) */
+    const selLg = el.querySelector('#cfg-lgpd');
+    if (selLg) {
+      selLg.value = S.config.lgpdNomes || 'completo';
+      selLg.onchange = () => { S.config.lgpdNomes = selLg.value; Store.save(); renderApp(); toast('🔒 Exibição de nomes atualizada.'); };
     }
 
     /* backup */
@@ -6839,9 +6890,9 @@ function wireBuscaGlobal() {
     if (q.length < 2) { fechar(); return; }
     const hitsC = S.clientes.filter(c => foldTxt(c.nome).includes(q)).slice(0, 6)
       .map(c => `<div class="it" data-go="clientes/${c.id}"><span class="avatar ${c.tipo === 'PJ' ? 'pj' : ''}" style="width:26px;height:26px;font-size:10px">${esc(iniciais(c.nome))}</span>
-        ${esc(c.nome)} <span class="t">cliente · ${esc(fmtCompact(clientePatrimonio(c)))}</span></div>`);
+        ${esc(nomeExib(c))} <span class="t">cliente · ${esc(fmtCompact(clientePatrimonio(c)))}</span></div>`);
     const hitsL = S.leads.filter(l => l.etapa !== 'convertido' && (foldTxt(l.nome).includes(q) || foldTxt(l.empresa).includes(q))).slice(0, 5)
-      .map(l => `<div class="it" data-go="pipeline/${l.id}">🎯 ${esc(l.nome)} <span class="t">lead · ${esc(etapaInfo(l.etapa).nome)}</span></div>`);
+      .map(l => `<div class="it" data-go="pipeline/${l.id}">🎯 ${esc(nomeExib(l))} <span class="t">lead · ${esc(etapaInfo(l.etapa).nome)}</span></div>`);
     const all = [...hitsC, ...hitsL];
     pop.innerHTML = all.length ? all.join('') : '<div class="it muted">Nada encontrado</div>';
     pop.classList.remove('hidden');
