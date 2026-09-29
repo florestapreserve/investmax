@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v10 \u00b7 29/09 11:16";</script>
+<script>window.__APPVER__ = "investmax-v11 \u00b7 29/09 17:08";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -853,13 +853,22 @@ function clientesOrdenados() {
 }
 /* ---------- LGPD: exibição de nomes (completo · iniciais tipo W.D.S · nº da conta). Só EXIBIÇÃO — o dado salvo continua completo. ---------- */
 function iniciaisLGPD(nome) { const ws = String(nome || '').trim().split(/\s+/).filter(w => w && !/^(de|da|do|das|dos|e)$/i.test(w)); return ws.map(w => w[0].toUpperCase()).join('.') || '—'; }
+function primeiroMaisIniciais(nome) { // "Fernanda Cristina Lopes Costa Alves" -> "Fernanda C.L.C.A"
+  const ws = String(nome || '').trim().split(/\s+/).filter(Boolean);
+  if (!ws.length) return '—';
+  const resto = ws.slice(1).filter(w => !/^(de|da|do|das|dos|e)$/i.test(w)).map(w => w[0].toUpperCase());
+  return ws[0] + (resto.length ? ' ' + resto.join('.') : '');
+}
+function _contaDe(p) { return p && p.contas && p.contas.length ? String(p.contas[0].numero || '').trim() : ''; }
 function _lgpdModo() { return ((typeof S !== 'undefined' && S && S.config && S.config.lgpdNomes)) || 'completo'; }
-function nomeMasc(nome) { return _lgpdModo() === 'completo' ? (nome || '—') : iniciaisLGPD(nome); } // quando só se tem a string do nome
+function nomeMasc(nome) { const m = _lgpdModo(); if (m === 'completo') return nome || '—'; if (m === 'primeiro') return primeiroMaisIniciais(nome); return iniciaisLGPD(nome); } // quando só se tem a string do nome
 function nomeExib(p) { // pessoa inteira (cliente com contas, ou lead)
   if (!p) return '—';
   const m = _lgpdModo();
   if (m === 'completo') return p.nome || '—';
-  if (m === 'conta') { const ct = (p.contas && p.contas.length ? String(p.contas[0].numero || '').trim() : ''); return ct && ct !== '—' ? 'conta ' + ct : iniciaisLGPD(p.nome); }
+  const ct = _contaDe(p);
+  if (m === 'primeiro') { const nm = primeiroMaisIniciais(p.nome); return ct && ct !== '—' ? nm + ' · ' + ct : nm; }
+  if (m === 'conta') return ct && ct !== '—' ? 'conta ' + ct : iniciaisLGPD(p.nome);
   return iniciaisLGPD(p.nome);
 }
 function nomeRef(obj) { // captação/alocação: nome do cliente vinculado ou nome livre (respeita LGPD)
@@ -6488,8 +6497,9 @@ Pages.config = {
           <p class="small muted mb">Como os nomes de clientes/leads aparecem nas telas. O dado completo continua salvo — isto é só exibição (bom pra mostrar a tela pra outra pessoa).</p>
           <select id="cfg-lgpd" style="width:100%">
             <option value="completo">Nome completo</option>
-            <option value="iniciais">Iniciais (ex.: W.D.S)</option>
-            <option value="conta">Nº da conta do cliente (iniciais quando não tiver)</option>
+            <option value="primeiro">Primeiro nome + iniciais + nº da conta (ex.: Fernanda C.L.C.A · 003618109)</option>
+            <option value="iniciais">Só iniciais (ex.: F.C.L.C.A)</option>
+            <option value="conta">Só o nº da conta do cliente</option>
           </select></div>
         <div class="card"><div class="card-title">🗄️ Seus dados agora</div>
           <div class="tbl-wrap"><table class="tbl"><tbody>
