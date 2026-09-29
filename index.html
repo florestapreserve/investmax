@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v9 \u00b7 21/09 09:21";</script>
+<script>window.__APPVER__ = "investmax-v10 \u00b7 29/09 11:16";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -2771,6 +2771,28 @@ function modalEditarCliente(id, aoSalvar) {
   });
 }
 
+/* edição rápida do "Potencial no mercado" direto pela ficha (um toque) */
+function modalPotencial(id) {
+  const c = getCliente(id);
+  if (!c) return;
+  openModal({
+    title: '🔮 Potencial no mercado — ' + esc(nomeExib(c)),
+    body: `<p class="small muted" style="margin-top:0">Quanto o cliente tem investido <b>lá fora</b> (fora da sua carteira). Aparece na ficha e ajuda a priorizar quem tem mais a trazer.</p>
+      ${moneyFld({ id: 'pot', label: 'Potencial no mercado (R$)', value: c.potencialMercado != null ? c.potencialMercado : '', hint: 'ex.: 8.000.000 ou 8M · deixe vazio para limpar' })}`,
+    footer: `<button class="btn" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" data-act="ok">Salvar</button>`,
+    onOpen(el) {
+      const inp = el.querySelector('[data-f="pot"]'); if (inp) inp.focus();
+      el.querySelector('[data-act="ok"]').onclick = () => {
+        const v = String(readForm(el).pot || '').trim();
+        const pot = v ? parseValor(v) : null;
+        if (v && isNaN(pot)) { toast('Valor inválido — use ex.: 8.000.000 ou 8M', 'err'); return; }
+        c.potencialMercado = pot;
+        closeModal(); toast('🔮 Potencial no mercado atualizado'); Store.commit();
+      };
+    },
+  });
+}
+
 function modalConta(clienteId, idx) {
   const c = getCliente(clienteId);
   const ct = idx != null ? c.contas[idx] : null;
@@ -3257,9 +3279,9 @@ function renderCliente360(el, id) {
         <div class="kpi"><div class="kpi-label">💰 Quanto já trouxe ${esc(rotuloFiltro)}</div>
           <div class="kpi-value" style="font-size:22px;color:${capFiltro.liquido >= 0 ? 'inherit' : 'var(--crit)'}">${fmtBRL(capFiltro.liquido)}</div>
           <div class="kpi-sub">⬇️ ${fmtBRL(capFiltro.entradas)} · ⬆️ ${fmtBRL(capFiltro.saidas)}${temFiltro ? ' · total geral: ' + fmtBRL(captacaoCliente(id, null).liquido) : ''}</div>
-          <div class="kpi-sub" style="margin-top:9px;border-top:1px solid var(--line);padding-top:9px">🔮 Potencial no mercado:
+          <div class="kpi-sub" id="edit-potencial" style="margin-top:9px;border-top:1px solid var(--line);padding-top:9px;cursor:pointer" title="Tocar para definir o potencial">🔮 Potencial no mercado:
             <b>${c.potencialMercado != null ? fmtBRL(c.potencialMercado) : '—'}</b>
-            ${c.potencialMercado != null ? '<span class="muted"> ainda lá fora</span>' : '<span class="muted"> (defina no ✏️ Editar)</span>'}</div></div>
+            ${c.potencialMercado != null ? '<span class="muted"> ainda lá fora · <span style="color:var(--accent-strong)">✏️ editar</span></span>' : '<span style="color:var(--accent-strong)"> ✏️ toque para definir</span>'}</div></div>
         <div class="kpi"><div class="kpi-label">📈 Receita feita ${temFiltro ? esc(rotuloFiltro) : '(acumulada)'}</div>
           <div class="kpi-value" style="font-size:22px;color:var(--good-text)">${fmtBRLc(temFiltro ? recFiltro : recTotal)}</div>
           <div class="kpi-sub">${temFiltro ? 'acumulada: ' + fmtBRLc(recTotal) : 'neste mês: ' + fmtBRLc(recMesAtual)}</div></div>
@@ -3310,6 +3332,7 @@ function renderCliente360(el, id) {
   el.querySelector('#reg-contato').onclick = () => modalRegistrarContato(id, null);
   el.querySelector('#ficha-reuniao').onclick = () => modalReuniao(null, { clienteId: id });
   el.querySelector('#edit-cli').onclick = () => modalEditarCliente(id);
+  { const ep = el.querySelector('#edit-potencial'); if (ep) ep.onclick = () => modalPotencial(id); }
   const addLb = el.querySelector('#add-lembrete');
   if (addLb) addLb.onclick = () => modalLembrete(id);
   el.querySelectorAll('[data-lembrete]').forEach(tr => tr.onclick = () => modalLembrete(id, tr.getAttribute('data-lembrete')));
@@ -4219,6 +4242,9 @@ function modalRecorrente(posId) {
 }
 
 /* ---------- pipe do mês (inalterado) ---------- */
+/* atalho de menu "🔮 Pipe" → abre a Produção já na aba Pipe (cadastro de projeções do mês) */
+Pages.pipe = { title: 'Pipe', render() { UI.abaProducao = 'pipe'; nav('producao'); } };
+
 function modalPipeMes(id) {
   const p = id ? S.pipeMes.find(x => x.id === id) : null;
   const pendente = p ? Math.max(0, (p.valorEsperado || 0) - (p.realizado || 0)) : 0;
@@ -6791,6 +6817,7 @@ Pages.config = {
 const NAV = [
   { rota: 'dashboard', nome: 'Dashboard', ico: '📊' },
   { rota: 'producao', nome: 'Produção', ico: '💰' },
+  { rota: 'pipe', nome: 'Pipe', ico: '🔮' },
   { rota: 'regua', nome: 'Régua', ico: '📏' },
   { rota: 'clientes', nome: 'Clientes', ico: '👥' },
   { rota: 'pipeline', nome: 'Pipeline', ico: '🎯' },
