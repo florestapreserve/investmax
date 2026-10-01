@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v13 \u00b7 01/10 16:20";</script>
+<script>window.__APPVER__ = "investmax-v14 \u00b7 01/10 18:37";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -453,6 +453,9 @@ textarea { resize: vertical; min-height: 70px; }
   body { background: #fff; color: #000; }
   .card { border-color: #ccc; box-shadow: none; }
 }
+/* abas "Nome | Nº conta" dentro do rótulo do campo de cliente */
+.seg.seg-mini { float: right; padding: 2px; border-radius: 8px; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.seg.seg-mini button { padding: 2px 9px; font-size: 11px; border-radius: 6px; }
 
 </style>
 </head>
@@ -1788,23 +1791,80 @@ function produtoConhecido(nomeCaracteristica) {
   if (p) return { tipoReceita: 'recorrente', ativo: p.ativo, emissor: p.emissor, classe: p.classe, taxaAa: p.taxaAa };
   return null;
 }
-function datalistClientes() { // busca de cliente por digitação — nomes puros, sem R$ (pedido do usuário)
-  return `<datalist id="dl-clientes">${[...S.clientes].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')).map(c => `<option value="${esc(c.nome)}">`).join('')}</datalist>`;
+/* ---------- busca de cliente: rótulo LGPD + nº da conta, com 2 modos (abas "Nome" | "Nº conta") ----------
+   O rótulo respeita a privacidade dos nomes (Configurações). O resolvedor aceita: nome completo, rótulo de
+   qualquer um dos 2 modos, só o nº da conta, ou o nome mascarado (se for único). */
+function rotuloCli(c, modo) {
+  if (!c) return '';
+  const ct = _contaDe(c), tem = ct && ct !== '—', nm = nomeSemConta(c);
+  if (modo === 'conta') return tem ? ct + ' · ' + nm : nm;
+  return tem ? nm + ' · ' + ct : nm;
 }
-function datalistClientesLeads(dlId) { // busca por digitação: clientes (👥) e leads (🎯) — pra vincular pendência
-  const cli = S.clientes.map(c => ['👥 ' + c.nome, c.nome]);
-  const leads = S.leads.filter(l => !['convertido', 'perdido', 'descartado'].includes(l.etapa)).map(l => ['🎯 ' + l.nome, l.nome]);
-  const ops = [...cli, ...leads].sort((a, b) => a[1].localeCompare(b[1], 'pt-BR'));
-  return `<datalist id="${dlId}">${ops.map(([label]) => `<option value="${esc(label)}">`).join('')}</datalist>`;
+function rotuloBuscaCliente(c) { return rotuloCli(c, UI.buscaCliModo || 'nome'); }
+function resolverClienteTexto(texto) {
+  const t = String(texto || '').trim();
+  if (!t) return null;
+  const ft = foldTxt(t);
+  let c = S.clientes.find(x => foldTxt(x.nome) === ft);
+  if (c) return c;
+  c = S.clientes.find(x => foldTxt(rotuloCli(x, 'nome')) === ft || foldTxt(rotuloCli(x, 'conta')) === ft);
+  if (c) return c;
+  for (const n of (t.match(/\d{4,}/g) || [])) { // só o número da conta
+    c = S.clientes.find(x => (x.contas || []).some(k => String(k.numero || '').replace(/\D/g, '') === n));
+    if (c) return c;
+  }
+  const cand = S.clientes.filter(x => foldTxt(nomeSemConta(x)) === ft); // nome mascarado, se não houver dois iguais
+  return cand.length === 1 ? cand[0] : null;
 }
-function resolverClienteOuLead(texto) { // "👥 Nome" / "🎯 Nome" / "Nome" → {clienteId} ou {leadId} ou null
+function resolverLeadTexto(texto) {
+  const ft = foldTxt(String(texto || '').trim());
+  if (!ft) return null;
+  const l = S.leads.find(x => foldTxt(x.nome) === ft);
+  if (l) return l;
+  const cand = S.leads.filter(x => foldTxt(nomeSemConta(x)) === ft);
+  return cand.length === 1 ? cand[0] : null;
+}
+function _htmlOpcoesCli(tipo) { // tipo: 'cli' (só clientes) | 'clilead' (clientes 👥 + leads 🎯)
+  const modo = UI.buscaCliModo || 'nome';
+  const chave = c => modo === 'conta' ? (String(_contaDe(c)).replace('—', '') || '~') : nomeSemConta(c);
+  let ops = S.clientes.map(c => [(tipo === 'clilead' ? '👥 ' : '') + rotuloCli(c, modo), chave(c)]);
+  if (tipo === 'clilead') ops = ops.concat(S.leads.filter(l => !['convertido', 'perdido', 'descartado'].includes(l.etapa)).map(l => ['🎯 ' + nomeSemConta(l), '~' + nomeSemConta(l)]));
+  ops.sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'pt-BR', { numeric: true }));
+  return ops.map(([v]) => `<option value="${esc(v)}">`).join('');
+}
+function datalistClientes(dlId) { return `<datalist id="${dlId || 'dl-clientes'}" data-dlcli="cli">${_htmlOpcoesCli('cli')}</datalist>`; }
+function datalistClientesLeads(dlId) { return `<datalist id="${dlId}" data-dlcli="clilead">${_htmlOpcoesCli('clilead')}</datalist>`; }
+function segBuscaCli() { // as "duas abas" do campo de cliente — vai dentro do <label>
+  const m = UI.buscaCliModo || 'nome';
+  return `<span class="seg seg-mini" data-segbc title="Buscar o cliente pelo nome ou pelo número da conta">
+    <button type="button" class="${m === 'nome' ? 'active' : ''}" data-bcm="nome">Nome</button>
+    <button type="button" class="${m === 'conta' ? 'active' : ''}" data-bcm="conta">Nº conta</button></span>`;
+}
+document.addEventListener('click', e => { // troca o modo sem perder o que já foi preenchido no formulário
+  const b = e.target.closest && e.target.closest('[data-bcm]');
+  if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  UI.buscaCliModo = b.getAttribute('data-bcm');
+  document.querySelectorAll('[data-segbc] [data-bcm]').forEach(x => x.classList.toggle('active', x.getAttribute('data-bcm') === UI.buscaCliModo));
+  document.querySelectorAll('datalist[data-dlcli]').forEach(dl => { dl.innerHTML = _htmlOpcoesCli(dl.getAttribute('data-dlcli')); });
+  document.querySelectorAll('input[list]').forEach(inp => { // reescreve o cliente já escolhido no formato novo
+    const dl = document.getElementById(inp.getAttribute('list'));
+    if (!dl || !dl.hasAttribute('data-dlcli') || !inp.value || /^🎯/.test(inp.value)) return;
+    const comEmoji = /^👥/.test(inp.value);
+    const c = resolverClienteTexto(inp.value.replace(/^👥\s*/, ''));
+    if (c) inp.value = (comEmoji ? '👥 ' : '') + rotuloBuscaCliente(c);
+  });
+  const fld = b.closest('.fld'), inp = fld && fld.querySelector('input');
+  if (inp) inp.focus();
+}, true);
+function resolverClienteOuLead(texto) { // "👥 rótulo" / "🎯 nome" / "texto" → {clienteId} ou {leadId} ou null
   const raw = (texto || '').trim();
   const m = raw.match(/^(👥|🎯)/); // o emoji DESAMBIGUA: 👥 = só cliente, 🎯 = só lead
   const t = raw.replace(/^(👥|🎯)\s*/, '');
   if (!t) return { clienteId: null, leadId: null };
   const soCliente = m && m[1] === '👥', soLead = m && m[1] === '🎯';
-  if (!soLead) { const c = S.clientes.find(x => foldTxt(x.nome) === foldTxt(t)); if (c) return { clienteId: c.id, leadId: null }; }
-  if (!soCliente) { const l = S.leads.find(x => foldTxt(x.nome) === foldTxt(t)); if (l) return { clienteId: null, leadId: l.id }; }
+  if (!soLead) { const c = resolverClienteTexto(t); if (c) return { clienteId: c.id, leadId: null }; }
+  if (!soCliente) { const l = resolverLeadTexto(t); if (l) return { clienteId: null, leadId: l.id }; }
   return { clienteId: null, leadId: null, naoAchou: t };
 }
 function datalistEmissores() { // sugestões do campo Emissor: os já usados
@@ -1847,7 +1907,7 @@ function leadOptions(selecionado) {
 
 /* opções de cliente para selects (ordenados por patrimônio) */
 function clienteOptions(selecionado, incluirVazio) {
-  const ops = clientesOrdenados().map(c => [c.id, c.nome + ' · ' + fmtCompact(clientePatrimonio(c))]);
+  const ops = clientesOrdenados().map(c => [c.id, rotuloCli(c, 'nome') + ' · ' + fmtCompact(clientePatrimonio(c))]);
   if (incluirVazio !== false) ops.unshift(['', '— sem vínculo —']);
   return ops.map(([v, l]) => `<option value="${esc(v)}" ${v === (selecionado || '') ? 'selected' : ''}>${esc(l)}</option>`).join('');
 }
@@ -2365,7 +2425,7 @@ function modalResolverAviso(av, status) {
   // canal só importa quando houve conversa de verdade (Realizado de aniversário/retorno) — reunião usa a modalidade; tarefa não conta na régua
   const mostraCanal = !!av.clienteId && status === 'realizado' && !['reuniao', 'lembrete', 'pendencia'].includes(av.tipo);
   const ehParecer = av.tipo === 'pendencia' && av.pendTipo === 'area' && status === 'realizado'; // pra área realizada, o "obs" é o parecer
-  const avVinc = av.clienteId ? '👥 ' + ((getCliente(av.clienteId) || {}).nome || '') : av.leadId ? '🎯 ' + ((getLead(av.leadId) || {}).nome || '') : '';
+  const avVinc = av.clienteId ? '👥 ' + rotuloBuscaCliente(getCliente(av.clienteId)) : av.leadId ? '🎯 ' + nomeSemConta(getLead(av.leadId) || {}) : '';
   const areasP = areasPendenciaLista();
   openModal({
     wide: true,
@@ -2390,7 +2450,7 @@ function modalResolverAviso(av, status) {
         <div class="form-grid">
           ${textareaFld({ id: 'avDescricao', label: 'Descrição da pendência', placeholder: 'o que ficou pendente / precisa ser resolvido' })}
           ${inputFld({ id: 'avPrazo', label: '⏰ Retornar em', type: 'date', value: hoje(), hint: 'no dia, aparece no "Avisos de hoje"' })}
-          <div class="fld" data-av-so="cliente"><label>Cliente ou lead</label><input data-f="avVinculo" list="dl-avpend-cl" value="${esc(avVinc)}" placeholder="digite para buscar…"></div>
+          <div class="fld" data-av-so="cliente"><label>Cliente ou lead ${segBuscaCli()}</label><input data-f="avVinculo" list="dl-avpend-cl" value="${esc(avVinc)}" placeholder="digite para buscar…"></div>
           <div class="fld" data-av-so="area"><label>Qual área?</label>
             <select data-f="avArea">${['<option value="">— escolha —</option>', ...areasP.map(a => `<option value="${esc(a)}">${esc(a)}</option>`), '<option value="__nova">➕ Nova área…</option>'].join('')}</select></div>
           <div class="fld" data-av-so="area" data-sub="av-nova-area" style="display:none"><label>Nome da nova área</label><input data-f="avNovaArea" placeholder="ex.: Compliance"></div>
@@ -3962,9 +4022,9 @@ function modalCaptacao(id, prefill) { // prefill: {clienteId, nomeLivre, valor, 
       ${datalistClientes()}
       ${(() => { // busca por digitação (sem R$ no nome); nome fora da lista fica registrado "sem vínculo"
         const atual = cp
-          ? (cp.clienteId ? ((getCliente(cp.clienteId) || {}).nome || '') : (cp.nomeLivre || ''))
-          : (pre ? (pre.clienteId ? ((getCliente(pre.clienteId) || {}).nome || '') : (pre.nomeLivre || '')) : '');
-        return inputFld({ id: 'clienteNome', label: 'Cliente', value: atual, list: 'dl-clientes', full: true, placeholder: 'digite para buscar…', hint: 'nome que não está na lista entra como "sem vínculo" (dá pra vincular depois)' });
+          ? (cp.clienteId ? rotuloBuscaCliente(getCliente(cp.clienteId)) : (cp.nomeLivre || ''))
+          : (pre ? (pre.clienteId ? rotuloBuscaCliente(getCliente(pre.clienteId)) : (pre.nomeLivre || '')) : '');
+        return inputFld({ id: 'clienteNome', label: 'Cliente ' + segBuscaCli(), value: atual, list: 'dl-clientes', full: true, placeholder: 'digite para buscar…', hint: 'nome que não está na lista entra como "sem vínculo" (dá pra vincular depois)' });
       })()}
       ${inputFld({ id: 'conta', label: 'Conta', value: cp ? (cp.conta || '') : '' })}
       <div class="fld"><label>Operação</label><select data-f="operacao">
@@ -4011,7 +4071,7 @@ function modalCaptacao(id, prefill) { // prefill: {clienteId, nomeLivre, valor, 
         const valor = Math.round(parseValor(f.valor) * 100) / 100; // 2 casas: sem centavo fantasma no patrimônio
         if (!f.data || isNaN(valor)) { toast('Preencha data e valor válidos.', 'err'); return; }
         const txtCli = (f.clienteNome || '').trim();
-        const cliAchado = txtCli ? S.clientes.find(c => foldTxt(c.nome) === foldTxt(txtCli)) : null;
+        const cliAchado = txtCli ? resolverClienteTexto(txtCli) : null;
         const dados = {
           data: f.data, valor, tipo: ctipo, clienteId: cliAchado ? cliAchado.id : null,
           nomeLivre: cliAchado ? null : (txtCli || null), conta: f.conta || null,
@@ -4271,12 +4331,12 @@ function modalPipeMes(id) {
   const mesesOp = []; // mês passado até 6 meses à frente (pipes de agosto, setembro… nascem daqui)
   for (let i = -1; i <= 6; i++) mesesOp.push(addMes(UI.mesRef, i));
   if (p && p.mes && !mesesOp.includes(p.mes)) mesesOp.unshift(p.mes);
-  const dlCli = `<datalist id="dl-pipe-cli">${clientesOrdenados().map(c => `<option value="${esc(c.nome)}">`).join('')}</datalist>`;
+  const dlCli = datalistClientes('dl-pipe-cli');
   const dlLead = `<datalist id="dl-pipe-lead">${S.leads.filter(l => !['convertido', 'perdido', 'descartado'].includes(l.etapa)).sort((a, b) => (b.potencial || 0) - (a.potencial || 0)).map(l => `<option value="${esc(l.nome)}">`).join('')}</datalist>`;
   openModal({
     title: p ? '✏️ Editar pipe' : '🌡️ Novo pipe do mês',
     body: `${dlCli}${dlLead}<div class="form-grid">
-      ${inputFld({ id: 'clienteNome', label: '👥 Cliente', value: cliAtual ? cliAtual.nome : '', list: 'dl-pipe-cli', placeholder: 'digite para buscar…' })}
+      ${inputFld({ id: 'clienteNome', label: '👥 Cliente ' + segBuscaCli(), value: cliAtual ? rotuloBuscaCliente(cliAtual) : '', list: 'dl-pipe-cli', placeholder: 'digite para buscar…' })}
       ${inputFld({ id: 'leadNome', label: '🎯 ou Lead — pode escrever um novo', value: leadAtual ? leadAtual.nome : (p && !p.clienteId ? p.nome : ''), list: 'dl-pipe-lead', placeholder: 'digite para buscar ou criar…', hint: 'nome novo vira um <b>lead no Pipeline</b> com estes dados, já vinculado — quem já existe eu vinculo sem duplicar' })}
       ${selectFld({ id: 'mes', label: '📅 Mês do pipe', value: p ? (p.mes || UI.mesRef) : UI.mesRef, options: mesesOp.map(m => [m, fmtMes(m)]), hint: 'dá pra mapear possíveis entradas de meses futuros (ex.: agosto e setembro)' })}
       ${moneyFld({ id: 'valorEsperado', label: 'Projeção de captação (R$)', value: p ? p.valorEsperado : '' })}
@@ -4308,11 +4368,11 @@ function modalPipeMes(id) {
         let clienteId = null, leadId = null, nome = txtCli || txtLead;
         let leadNovo = null, vinculoMsg = '';
         if (txtCli) {
-          const c = S.clientes.find(x => foldTxt(x.nome) === foldTxt(txtCli));
+          const c = resolverClienteTexto(txtCli);
           if (!c) { toast(`Não achei o cliente "<b>${esc(txtCli)}</b>". Escolha um da lista que aparece ao digitar — ou, se for um prospect novo, escreva no campo <b>Lead</b>.`, 'err'); return; }
           clienteId = c.id; nome = c.nome;
         } else {
-          const cliIgual = S.clientes.find(x => foldTxt(x.nome) === foldTxt(txtLead));
+          const cliIgual = resolverClienteTexto(txtLead);
           const leadIgual = S.leads.find(x => foldTxt(x.nome) === foldTxt(txtLead));
           if (cliIgual) { clienteId = cliIgual.id; nome = cliIgual.nome; vinculoMsg = ' · 👥 já era cliente — vinculei'; }
           else if (leadIgual) { leadId = leadIgual.id; nome = leadIgual.nome; if (!p || p.leadId !== leadIgual.id) vinculoMsg = ' · 🎯 vinculado ao lead que já existia'; }
@@ -4424,7 +4484,8 @@ Pages.producao = {
     const meta = metaDoMes(mk);
     const captado = captadoNoMes(mk);
     const recCabeca = receitaCabecaNoMes(mk), recRecorrente = receitaRecorrenteNoMes(mk);
-    const receita = recCabeca + recRecorrente;
+    const recTipo = UI.recTipo || 'tudo'; // filtro da aba Receita (Tudo/Pontual/Recorrente) também muda a meta aqui em cima
+    const receita = (recTipo === 'recorrente' ? 0 : recCabeca) + (recTipo === 'pontual' ? 0 : recRecorrente);
     const alocado = alocadoNoMes(mk);
     const semAlocar = captado - alocado;
     const caps = captacoesDoMes(mk).sort(porData).reverse();
@@ -4559,7 +4620,7 @@ Pages.producao = {
             `⬇️ ${fmtCompact(entradasNoMes(mk))} entradas · ⬆️ ${fmtCompact(saidasNoMes(mk))} saídas`,
             meterHTML(captado, meta.captacao, { fmt: fmtCompact }),
             'Clique para ver todas as captações, entradas e saídas')
-          + cartao('kpi-receita', '📈 Receita · meta ' + esc(fmtCompact(meta.receita)), fmtBRLc(receita),
+          + cartao('kpi-receita', '📈 Receita' + (recTipo === 'pontual' ? ' (só ⚡ pontual)' : recTipo === 'recorrente' ? ' (só 🔁 recorrente)' : '') + ' · meta ' + esc(fmtCompact(meta.receita)), fmtBRLc(receita),
             `⚡ ${fmtBRLc(recCabeca)} pontual · 🔁 ${fmtBRLc(recRecorrente)} recorrente`,
             meterHTML(receita, meta.receita, { fmt: fmtBRLc }),
             'Clique para ver todas as receitas por cliente e por data')
@@ -4746,12 +4807,13 @@ function renderReceita(mk) {
   const tituloPeriodo = periodo === 'mes' ? fmtMes(mk) : 'desde o início';
 
   /* pontuais do período */
-  const alocsP = (periodo === 'mes' ? alocacoesDoMes(mk) : [...S.alocacoes]).filter(a => (a.tipoReceita || 'cabeca') === 'cabeca');
+  const rt = UI.recTipo || 'tudo'; // filtro do Erick: tudo | pontual | recorrente (reflete também na meta do topo)
+  const alocsP = rt === 'recorrente' ? [] : (periodo === 'mes' ? alocacoesDoMes(mk) : [...S.alocacoes]).filter(a => (a.tipoReceita || 'cabeca') === 'cabeca');
   const recPontual = somar(alocsP.filter(a => a.classe), a => a.receita);
   const semClasse = somar(alocsP.filter(a => !a.classe), a => a.receita);
 
   /* recorrentes: receita realizada no período (mês futuro = previsão) */
-  const posRec = S.recorrentes.map(p => {
+  const posRec = (rt === 'pontual' ? [] : S.recorrentes).map(p => {
     let val;
     if (periodo === 'mes') val = mesFuturo ? receitaMensalPosicaoProjetada(p, mk) : receitaMensalPosicao(p, mk);
     else {
@@ -4897,6 +4959,11 @@ function renderReceita(mk) {
         <button class="${periodo === 'mes' ? 'active' : ''}" data-p="mes">${esc(fmtMes(mk))}</button>
         <button class="${periodo === 'tudo' ? 'active' : ''}" data-p="tudo">Desde o início</button>
       </div>
+      <div class="seg" id="seg-rec-tipo" title="Filtra a lista E a meta de receita lá em cima">
+        <button class="${rt === 'tudo' ? 'active' : ''}" data-rt="tudo">Tudo</button>
+        <button class="${rt === 'pontual' ? 'active' : ''}" data-rt="pontual">⚡ Pontual</button>
+        <button class="${rt === 'recorrente' ? 'active' : ''}" data-rt="recorrente">🔁 Recorrente</button>
+      </div>
       ${UI.recVisao === 'produto' ? `<select id="rec-ativo-sel" style="width:auto;min-width:130px" title="Escolha um ativo para abrir por característica/emissor">
         <option value="">Todos os ativos</option>
         ${ativosFiltro.map(a => `<option value="${esc(a.chave)}" ${UI.recAtivoSel === a.chave ? 'selected' : ''}>${esc(a.rotulo)}</option>`).join('')}
@@ -4923,6 +4990,7 @@ function wireReceita(el) {
   if (!seg) return;
   seg.querySelectorAll('button').forEach(b => b.onclick = () => { UI.recVisao = b.getAttribute('data-v'); renderApp(); });
   el.querySelectorAll('#seg-rec-periodo button').forEach(b => b.onclick = () => { UI.recPeriodo = b.getAttribute('data-p'); renderApp(); });
+  el.querySelectorAll('#seg-rec-tipo button').forEach(b => b.onclick = () => { UI.recTipo = b.getAttribute('data-rt'); renderApp(); });
   el.querySelectorAll('[data-rec-cli]').forEach(tr => tr.onclick = () => {
     UI.recCliente = tr.getAttribute('data-rec-cli');
     UI.recVisao = 'detalhe';
@@ -4983,7 +5051,7 @@ function renderRegistro() {
     <div class="card-title">📝 Registrar — marque o que aconteceu com o cliente</div>
     ${datalistClientes()}${datalistAtivos()}${datalistEmissores()}${datalistCaracteristicas()}
     <div class="form-grid">
-      ${inputFld({ id: 'regClienteNome', label: 'Cliente', list: 'dl-clientes', placeholder: 'digite para buscar…', hint: 'nome que não está na lista entra como "sem vínculo"' })}
+      ${inputFld({ id: 'regClienteNome', label: 'Cliente ' + segBuscaCli(), list: 'dl-clientes', placeholder: 'digite para buscar…', hint: 'nome que não está na lista entra como "sem vínculo"' })}
       ${inputFld({ id: 'regData', label: 'Data', type: 'date', value: hoje() })}
     </div>
     <div class="card mt" style="background:var(--surface2)">
@@ -5093,7 +5161,7 @@ function wireRegistro(el) {
     /* 1º: validar TUDO — nada é salvo antes de todas as validações passarem */
     const f = readForm(el);
     const txtCli = (f.regClienteNome || '').trim();
-    const cliAchado = txtCli ? S.clientes.find(c => foldTxt(c.nome) === foldTxt(txtCli)) : null;
+    const cliAchado = txtCli ? resolverClienteTexto(txtCli) : null;
     const clienteId = cliAchado ? cliAchado.id : null;
     const nomeLivre = cliAchado ? null : (txtCli || null);
     const data = f.regData;
@@ -5862,7 +5930,7 @@ function modalPendencia(id) {
           <select data-f="area">${['<option value="">— escolha —</option>', ...areas.map(a => `<option value="${esc(a)}" ${p && foldTxt(p.area || '') === foldTxt(a) ? 'selected' : ''}>${esc(a)}</option>`), '<option value="__nova">➕ Nova área…</option>'].join('')}</select></div>
         <div class="fld" data-so="area" data-sub="nova-area" style="display:none"><label>Nome da nova área</label><input data-f="novaArea" placeholder="ex.: Compliance"></div>
         ${datalistClientesLeads('dl-pend-cl')}
-        ${(() => { const v = p ? pendenciaVinculo(p) : null; return inputFld({ id: 'vinculoNome', label: 'Cliente ou lead (opcional)', value: v ? v.ico + ' ' + v.nome : '', list: 'dl-pend-cl', placeholder: 'digite para buscar cliente ou lead…' }); })()}
+        ${(() => { const v = p ? pendenciaVinculo(p) : null; return inputFld({ id: 'vinculoNome', label: 'Cliente ou lead (opcional) ' + segBuscaCli(), value: v ? v.ico + ' ' + (v.tipo === 'cliente' ? rotuloBuscaCliente(getCliente(p.clienteId)) : nomeSemConta({ nome: v.nome })) : '', list: 'dl-pend-cl', placeholder: 'digite para buscar cliente ou lead…' }); })()}
         ${inputFld({ id: 'prazo', label: '⏰ Prazo', type: 'date', value: p ? (p.prazo || '') : hoje(), hint: 'no dia, aparece no "Avisos de hoje" do Dashboard' })}
         ${textareaFld({ id: 'descricao', label: 'Descrição', value: p ? (p.descricao || '') : '', placeholder: 'o que precisa ser resolvido' })}
         <div class="fld full" data-so="area"><label>📝 Parecer da área <span class="small muted">(preencha quando a área responder)</span></label>
