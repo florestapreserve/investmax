@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v11 \u00b7 29/09 17:08";</script>
+<script>window.__APPVER__ = "investmax-v12 \u00b7 01/10 16:06";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -870,6 +870,13 @@ function nomeExib(p) { // pessoa inteira (cliente com contas, ou lead)
   if (m === 'primeiro') { const nm = primeiroMaisIniciais(p.nome); return ct && ct !== '—' ? nm + ' · ' + ct : nm; }
   if (m === 'conta') return ct && ct !== '—' ? 'conta ' + ct : iniciaisLGPD(p.nome);
   return iniciaisLGPD(p.nome);
+}
+function nomeSemConta(p) { // nome mascarado SEM o nº da conta colado (pra listas que têm coluna de conta à parte)
+  if (!p) return '—';
+  const m = _lgpdModo();
+  if (m === 'completo') return p.nome || '—';
+  if (m === 'iniciais') return iniciaisLGPD(p.nome);
+  return primeiroMaisIniciais(p.nome);
 }
 function nomeRef(obj) { // captação/alocação: nome do cliente vinculado ou nome livre (respeita LGPD)
   const c = obj.clienteId && getCliente(obj.clienteId);
@@ -2881,9 +2888,10 @@ Pages.clientes = {
     let lista = S.clientes.map(c => ({
       c, nome: c.nome, pat: clientePatrimonio(c),
       r: reguaCliente(c, null), contas: c.contas.length,
+      conta: c.contas && c.contas.length ? String(c.contas[0].numero || '') : '',
     }));
     const q = foldTxt(UI.buscaClientes);
-    if (q) lista = lista.filter(x => foldTxt(x.nome).includes(q));
+    if (q) lista = lista.filter(x => foldTxt(x.nome).includes(q) || (x.c.contas || []).some(ct => foldTxt(String(ct.numero || '')).includes(q)));
     if (UI.filtroClientes === 'pf') lista = lista.filter(x => x.c.tipo === 'PF');
     if (UI.filtroClientes === 'pj') lista = lista.filter(x => x.c.tipo === 'PJ');
     if (UI.filtroClientes === 'zerados') lista = lista.filter(x => x.pat === 0);
@@ -2897,8 +2905,9 @@ Pages.clientes = {
       const aniv = c.aniversario ? proximoAniversario(c.aniversario) : null;
       return `<tr class="click" data-cli="${c.id}">
         <td><div class="row"><span class="avatar ${c.tipo === 'PJ' ? 'pj' : ''}">${esc(iniciais(c.nome))}</span>
-          <div><b>${esc(nomeExib(c))}</b>
+          <div><b>${esc(nomeSemConta(c))}</b>
           <div class="small muted">${c.tipo === 'PJ' ? 'Empresa' : (c.sexo === 'F' ? 'Pessoa física · F' : 'Pessoa física · M')}${aniv && aniv.dias <= 15 ? ' · <span class="bday">🎂 ' + (aniv.dias === 0 ? 'hoje!' : fmtDateShort(aniv.data)) + '</span>' : ''}</div></div></div></td>
+        <td class="mono">${c.contas && c.contas.length ? esc(c.contas[0].numero || '—') + (c.contas.length > 1 ? ' <span class="muted small">+' + (c.contas.length - 1) + '</span>' : '') : '<span class="muted">—</span>'}</td>
         <td>${esc(c.perfil || '—')}</td>
         <td>${esc(c.tipoInvestidor || '—')}</td>
         <td class="center mono">${x.contas}</td>
@@ -2934,7 +2943,7 @@ Pages.clientes = {
       })() +
       `<div class="card">
         <div class="row wrap mb">
-          <input id="busca-cli" style="width:240px" placeholder="Buscar…" value="${esc(UI.buscaClientes)}">
+          <input id="busca-cli" style="width:240px" placeholder="Buscar nome ou nº da conta…" value="${esc(UI.buscaClientes)}">
           <div class="seg" id="seg-tipo">
             <button class="${UI.filtroClientes === 'todos' ? 'active' : ''}" data-f="todos">Todos</button>
             <button class="${UI.filtroClientes === 'pf' ? 'active' : ''}" data-f="pf">PF</button>
@@ -2943,9 +2952,9 @@ Pages.clientes = {
           </div>
         </div>
         <div class="tbl-wrap"><table class="tbl"><thead><tr>
-          ${thSort('clientes', 'nome', 'Cliente')}<th>Perfil</th><th>Classificação</th>
+          ${thSort('clientes', 'nome', 'Cliente')}${thSort('clientes', 'conta', 'Nº conta')}<th>Perfil</th><th>Classificação</th>
           <th class="center">Contas</th>${thSort('clientes', 'pat', 'Patrimônio', 'right')}<th class="center">Régua</th>
-        </tr></thead><tbody>${rows || `<tr><td colspan="6">${emptyState('👥', 'Nenhum cliente encontrado.')}</td></tr>`}</tbody></table></div>
+        </tr></thead><tbody>${rows || `<tr><td colspan="7">${emptyState('👥', 'Nenhum cliente encontrado.')}</td></tr>`}</tbody></table></div>
       </div>`;
 
     el.querySelector('#novo-cli').onclick = () => modalEditarCliente(null);
