@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v14 \u00b7 01/10 18:37";</script>
+<script>window.__APPVER__ = "investmax-v15 \u00b7 01/10 18:38";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -4807,7 +4807,7 @@ function renderReceita(mk) {
   const tituloPeriodo = periodo === 'mes' ? fmtMes(mk) : 'desde o início';
 
   /* pontuais do período */
-  const rt = UI.recTipo || 'tudo'; // filtro do Erick: tudo | pontual | recorrente (reflete também na meta do topo)
+  const rt = UI.recTipo || 'tudo'; // filtro: tudo | pontual | recorrente (reflete também na meta do topo)
   const alocsP = rt === 'recorrente' ? [] : (periodo === 'mes' ? alocacoesDoMes(mk) : [...S.alocacoes]).filter(a => (a.tipoReceita || 'cabeca') === 'cabeca');
   const recPontual = somar(alocsP.filter(a => a.classe), a => a.receita);
   const semClasse = somar(alocsP.filter(a => !a.classe), a => a.receita);
