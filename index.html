@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v16 \u00b7 01/10 18:41";</script>
+<script>window.__APPVER__ = "investmax-v17 \u00b7 01/10 18:47";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -691,6 +691,10 @@ const Store = {
     if (!st.config.repasseMax) st.config.repasseMax = 45;
     if (!st.avisosDia) st.avisosDia = []; // baixas dos avisos do dia (realizado/reagendado/recusado)
     if (!st.lembretes) st.lembretes = []; // avisos do cliente: {id, clienteId, data, classe, descricao, criadoEm, feito}
+    // nomes em modo LGPD: liga "Primeiro nome + iniciais + nº da conta" UMA vez em todo aparelho (pedido 01/out);
+    // a marca _lgpdPrimeiroAplicado garante que, se a pessoa trocar depois em Configurações, a escolha dela vale
+    if (!st.config) st.config = {};
+    if (!st.config._lgpdPrimeiroAplicado) { st.config.lgpdNomes = 'primeiro'; st.config._lgpdPrimeiroAplicado = true; }
     // simulador (Metas): padrões pra um app recém-instalado (antes de importar backup) não quebrar Produção/Metas
     if (!st.simulador || typeof st.simulador !== 'object') st.simulador = {};
     if (st.simulador.repasse == null) st.simulador.repasse = 0.38;
@@ -870,7 +874,7 @@ function primeiroMaisIniciais(nome) { // "Fernanda Cristina Lopes Costa Alves" -
   return ws[0] + (resto.length ? ' ' + resto.join('.') : '');
 }
 function _contaDe(p) { return p && p.contas && p.contas.length ? String(p.contas[0].numero || '').trim() : ''; }
-function _lgpdModo() { return ((typeof S !== 'undefined' && S && S.config && S.config.lgpdNomes)) || 'completo'; }
+function _lgpdModo() { return ((typeof S !== 'undefined' && S && S.config && S.config.lgpdNomes)) || 'primeiro'; } // padrão: primeiro nome + iniciais (+ nº da conta)
 function nomeMasc(nome) { const m = _lgpdModo(); if (m === 'completo') return nome || '—'; if (m === 'primeiro') return primeiroMaisIniciais(nome); return iniciaisLGPD(nome); } // quando só se tem a string do nome
 function nomeExib(p) { // pessoa inteira (cliente com contas, ou lead)
   if (!p) return '—';
