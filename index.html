@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v15 \u00b7 01/10 18:38";</script>
+<script>window.__APPVER__ = "investmax-v16 \u00b7 01/10 18:41";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -691,6 +691,13 @@ const Store = {
     if (!st.config.repasseMax) st.config.repasseMax = 45;
     if (!st.avisosDia) st.avisosDia = []; // baixas dos avisos do dia (realizado/reagendado/recusado)
     if (!st.lembretes) st.lembretes = []; // avisos do cliente: {id, clienteId, data, classe, descricao, criadoEm, feito}
+    // simulador (Metas): padrões pra um app recém-instalado (antes de importar backup) não quebrar Produção/Metas
+    if (!st.simulador || typeof st.simulador !== 'object') st.simulador = {};
+    if (st.simulador.repasse == null) st.simulador.repasse = 0.38;
+    if (st.simulador.captacao == null) st.simulador.captacao = 0;
+    if (st.simulador.net == null) st.simulador.net = 0;
+    if (!Array.isArray(st.simulador.classes)) st.simulador.classes = [];
+    if (!Array.isArray(st.simulador.extras)) st.simulador.extras = [];
     if (!st.config.classesAviso) st.config.classesAviso = ['📅 Vencimento', '💰 Aporte previsto', '📄 Enviar relatório', '📞 Cobrar/retornar', '📋 Documento pendente', '🎯 Outro'];
     if (!st.pendencias) st.pendencias = []; // pendências: {id, tipo minha|area, area, clienteId, leadId, descricao, prazo, parecer, feito, follow, criadoEm}
     for (const p of st.pendencias) { if (p.leadId === undefined) p.leadId = null; if (p.follow === undefined) p.follow = false; } // vínculo com lead + tipo "Follow Cliente"
