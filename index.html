@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v17 \u00b7 01/10 18:47";</script>
+<script>window.__APPVER__ = "investmax-v18 \u00b7 04/10 21:19";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -456,6 +456,52 @@ textarea { resize: vertical; min-height: 70px; }
 /* abas "Nome | Nº conta" dentro do rótulo do campo de cliente */
 .seg.seg-mini { float: right; padding: 2px; border-radius: 8px; font-weight: 400; text-transform: none; letter-spacing: 0; }
 .seg.seg-mini button { padding: 2px 9px; font-size: 11px; border-radius: 6px; }
+
+/* ===== Dashboard em blocos (layout "Bento") ===== */
+.bento { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; grid-auto-flow: dense; }
+.bt { background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 16px; display: flex; flex-direction: column; gap: 4px; min-height: 104px; min-width: 0; }
+.bt.click { cursor: pointer; transition: transform .15s ease, box-shadow .15s ease; }
+.bt.click:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(10,40,44,.08); }
+.bt-l { font-size: 12px; color: var(--ink2); font-weight: 600; }
+.bt-v { font-size: 22px; font-weight: 800; letter-spacing: -.02em; line-height: 1.15; margin-top: auto; }
+.bt-v small { font-size: 13px; color: var(--ink2); font-weight: 600; }
+.bt-v-xl { font-size: 30px; }
+.bt-s { font-size: 12px; color: var(--ink2); }
+.bt .up { color: var(--good-text); } .bt .down { color: var(--crit); }
+.bt-cap { grid-column: span 2; flex-direction: row; justify-content: space-between; align-items: flex-end; gap: 14px; }
+.bt-txt { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.bt-bars { display: flex; align-items: flex-end; gap: 6px; height: 72px; flex: none; }
+.bt-bars span { width: 12px; border-radius: 4px; background: #cfe0e0; }
+.bt-bars span.cur { background: #0E4E54; }
+.bt-bars span.neg { background: #e3c9b5; }
+.bt-dark { background: #0E4E54; border-color: #0E4E54; color: #fff; }
+.bt-dark .bt-l, .bt-dark .bt-s { color: #cde6e5; }
+.bt-warm { background: #fdf0dc; border-color: #f4dcb8; }
+.bt-warm .bt-l { color: #7a3b04; font-weight: 700; }
+.bt-avs { display: flex; align-items: center; margin-top: auto; }
+.bt-avs b { font-size: 13px; color: #7a3b04; margin-left: 8px; }
+.bt-av { width: 32px; height: 32px; border-radius: 16px; background: #c26a12; color: #fff; font-size: 12px; font-weight: 800; display: flex; align-items: center; justify-content: center; border: 2px solid #fdf0dc; }
+.bt-av + .bt-av { margin-left: -8px; background: #7a3b04; }
+.bt-prog { height: 5px; border-radius: 3px; background: #dce5e6; overflow: hidden; margin-top: 6px; }
+.bt-prog i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.bt-mini { flex-direction: row; justify-content: space-between; align-items: center; min-height: 0; }
+.bt-mini .bt-l { max-width: 80px; }
+.bt-n { font-size: 28px; font-weight: 800; }
+.bt-donut { grid-column: 3 / span 2; grid-row: 2 / span 2; }
+.bt-donut .viz { margin: 4px 0; }
+@media (max-width: 780px) {
+  .bento { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .bt { padding: 14px; border-radius: 20px; }
+  .bt-v { font-size: 20px; }
+  .bt-v-xl { font-size: 26px; }
+  .bt-donut { grid-column: span 2; grid-row: auto; }
+  .bt-donut .viz { flex-direction: column; align-items: center; }
+  .bt-donut .legend { width: 100%; }
+  .bt-donut .legend .li { width: 100%; display: flex; gap: 6px; align-items: center; }
+  .bt-donut .legend .li .mono { margin-left: auto; white-space: nowrap; }
+  .bt-bars span { width: 10px; }
+}
+@media (max-width: 380px) { .bt-bars { display: none; } }
 
 </style>
 </head>
@@ -2259,11 +2305,66 @@ Pages.dashboard = {
     const presas = captacoesPresasPatrimonio();
     const totalPresas = totalPresasReal(); // mudança REAL no patrimônio (respeita o piso em 0)
 
+    /* 🍱 blocos do topo (layout "Bento"): números do mês + atalhos */
+    const repMin = S.config.repasseMin || 38, repMax = S.config.repasseMax || 45;
+    const capAnt = captadoNoMes(addMes(mk, -1));
+    const varCap = capAnt > 0 ? (captado - capAnt) / capAnt : null;
+    const ult6 = [-5, -4, -3, -2, -1, 0].map(d => { const m = addMes(mk, d); return { m, v: captadoNoMes(m) }; });
+    const maxBar = Math.max(1, ...ult6.map(x => Math.abs(x.v)));
+    const reu1 = primeirasReunioesNoMes(mk), metaReu = S.config.metaReuniao1 || 12;
+    const niverHoje = nivers.filter(x => x.aniv.dias === 0);
+    const niverMostra = niverHoje.length ? niverHoje : nivers.filter(x => x.aniv.dias <= 7);
+    const crit4 = criticos.filter(x => x.r.nota.ord >= 4).length;
+    const pctMeta = (v, m) => m > 0 ? fmtPct(v / m, 0) + ' da meta' : 'sem meta';
+    const bentoHTML = `<div class="bento mb">
+      <div class="bt bt-cap click" id="dash-kpi-cap" title="Ver captações, entradas e saídas">
+        <div class="bt-txt">
+          <span class="bt-l">Captação líquida · ${esc(fmtMes(mk))}</span>
+          <span class="bt-v bt-v-xl">${fmtBRL(captado)}</span>
+          <span class="bt-s">${varCap != null ? `<b class="${varCap >= 0 ? 'up' : 'down'}">${varCap >= 0 ? '↑' : '↓'} ${fmtPct(Math.abs(varCap), 0)}</b> vs mês anterior · ` : ''}${pctMeta(captado, meta.captacao)}</span>
+          ${projCap ? `<span class="bt-s">Projeção do ritmo: <b class="${projCap >= meta.captacao ? 'up' : 'down'}">${fmtCompact(projCap)}</b></span>` : ''}
+        </div>
+        <div class="bt-bars" aria-hidden="true">${ult6.map(x => `<span title="${esc(fmtMes(x.m))}: ${esc(fmtCompact(x.v))}" class="${x.m === mk ? 'cur' : x.v < 0 ? 'neg' : ''}" style="height:${Math.max(6, Math.round(Math.abs(x.v) / maxBar * 100))}%"></span>`).join('')}</div>
+      </div>
+      <div class="bt bt-dark click" id="dash-kpi-rec" title="Ver receita assessor + global">
+        <span class="bt-l">Receita (sua)</span>
+        <span class="bt-v">${fmtBRLc(receita)}</span>
+        <span class="bt-s">${pctMeta(receita, meta.receita)}${receitaGlobalNoMes(mk) ? ' · global ' + fmtCompact(receitaGlobalNoMes(mk)) : ''}</span>
+      </div>
+      <div class="bt" id="dash-kpi-repasse" title="Sua parte da receita do mês">
+        <span class="bt-l">Repasse <button class="btn btn-sm icon-btn" id="edit-repasse" title="Editar a faixa de %" aria-label="Editar a faixa do repasse" style="float:right">✏️</button></span>
+        <span class="bt-v">${fmtBRLc(receita * repMin / 100)}</span>
+        <span class="bt-s">até ${fmtBRLc(receita * repMax / 100)} · <span style="white-space:nowrap">${pctBR(repMin / 100)}–${pctBR(repMax / 100)}%</span></span>
+      </div>
+      <div class="bt click" id="dash-kpi-reu" title="Abrir Reuniões">
+        <span class="bt-l">1ªs reuniões</span>
+        <span class="bt-v">${reu1}<small> / ${metaReu}</small></span>
+        <div class="bt-prog"><i style="width:${Math.min(100, reu1 / Math.max(1, metaReu) * 100)}%"></i></div>
+      </div>
+      <div class="bt bt-warm click" id="bt-niver" title="Ver aniversários">
+        <span class="bt-l">${niverHoje.length ? 'Aniversários hoje' : 'Aniversários · 7 dias'}</span>
+        ${niverMostra.length ? `<div class="bt-avs">${niverMostra.slice(0, 3).map(x => `<span class="bt-av">${esc(iniciaisLGPD(x.c.nome).replace(/\./g, '').slice(0, 2))}</span>`).join('')}<b>${niverMostra.length} cliente${niverMostra.length === 1 ? '' : 's'}</b></div>` : '<span class="bt-s">nenhum</span>'}
+      </div>
+      <div class="bt bt-mini click" id="bt-leads" title="Leads parados há mais de 7 dias">
+        <span class="bt-l">Leads parados</span><span class="bt-n" style="color:var(--s7)">${cobrar.length}</span>
+      </div>
+      <div class="bt bt-mini click" id="bt-regua" title="${crit4 ? fmtBRL(patCritico) + ' em contato crítico' : 'Abrir Régua'}">
+        <span class="bt-l">Régua crítica</span><span class="bt-n" style="color:${crit4 ? 'var(--warn-text)' : 'var(--good-text)'}">${crit4}</span>
+      </div>
+      <div class="bt bt-donut">
+        <span class="bt-l" style="font-weight:700;color:var(--ink)">Concentração da carteira</span>
+        ${chartDonut({ items: donutItems, centro: { valor: fmtCompact(patTotal), label: 'total' }, fmtLeg: i => fmtCompact(i.valor) })}
+        <span class="bt-s">Top 5 = <b>${fmtPct(pctTop5, 0)}</b> da carteira${pctTop5 > 0.7 ? ' — concentração alta' : ''}</span>
+      </div>
+    </div>`;
+
     el.innerHTML = pageHead('📊 Visão geral',
       hojeExtenso() + ' · ' + S.clientes.length + ' clientes · ' + fmtBRL(patTotal) + ' sob gestão', mesNavHTML()) +
 
-      (presas.length ? `<div class="warn-banner">🔄 <div><b>${presas.length} captação${presas.length === 1 ? '' : 'ões'} sua${presas.length === 1 ? '' : 's'} ainda não ${presas.length === 1 ? 'entrou' : 'entraram'} no patrimônio</b> (${fmtBRL(totalPresas)} líquido) — foram lançadas antes desta regra existir. <button class="btn btn-sm btn-primary" id="aplicar-presas">Aplicar agora</button><br><span class="small">As captações da planilha não são tocadas (já estão no saldo).</span></div></div>` : '') +
+      (presas.length ? `<div class="warn-banner">🔄 <div><b>${presas.length} ${presas.length === 1 ? 'captação' : 'captações'} sua${presas.length === 1 ? '' : 's'} ainda não ${presas.length === 1 ? 'entrou' : 'entraram'} no patrimônio</b> (${fmtBRL(totalPresas)} líquido) — foram lançadas antes desta regra existir. <button class="btn btn-sm btn-primary" id="aplicar-presas">Aplicar agora</button><br><span class="small">As captações da planilha não são tocadas (já estão no saldo).</span></div></div>` : '') +
       (patCritico > 0 ? `<div class="warn-banner crit-banner">🚨 <div><b>${fmtBRL(patCritico)} em patrimônio com contato CRÍTICO</b> (mais de ${S.config.reguaFaixas.D} dias sem falar). Priorize a <a href="#/regua">Régua</a> hoje.</div></div>` : '') +
+
+      bentoHTML +
 
       /* 📣 avisos do dia: reunião de hoje, aniversário e retornos — nascem pendentes, baixa vai pro histórico */
       (avisos.length ? `<div class="card mb" id="card-avisos">
@@ -2291,44 +2392,7 @@ Pages.dashboard = {
         <p class="small muted mt">Reunião do dia, aniversário e retornos nascem <b>pendentes</b>. A baixa registra automaticamente no histórico do cliente (ou do lead) vinculado.</p>
       </div>` : '') +
 
-      `<div class="grid g4 mb">
-        <div class="card kpi" id="dash-kpi-cap" style="cursor:pointer" title="Clique para ver todas as captações, entradas e saídas">
-          <div class="kpi-label">💰 Captação líquida — ${esc(fmtMes(mk))} <span style="float:right">›</span></div>
-          <div class="kpi-value" style="font-size:24px">${fmtBRL(captado)}</div>
-          ${meterHTML(captado, meta.captacao, { fmt: fmtCompact })}
-          ${projCap ? `<div class="kpi-sub">Projeção do ritmo atual: <b class="${projCap >= meta.captacao ? 'up' : 'down'}">${fmtCompact(projCap)}</b></div>` : ''}</div>
-        <div class="card kpi" id="dash-kpi-rec" style="cursor:pointer" title="Clique para ver todas as receitas por cliente e por data">
-          <div class="kpi-label">📈 Receita (sua) — ${esc(fmtMes(mk))} <span style="float:right">›</span></div>
-          <div class="kpi-value" style="font-size:24px">${fmtBRLc(receita)}</div>
-          <div class="kpi-sub">⚡ ${fmtBRLc(receitaCabecaNoMes(mk, 'assessor'))} pontual · 🔁 ${fmtBRLc(receitaRecorrenteNoMes(mk, 'assessor'))} recorrente${receitaGlobalNoMes(mk) ? ' · 🏥 ' + fmtBRLc(receitaGlobalNoMes(mk)) + ' global' : ''}</div>
-          ${meterHTML(receita, meta.receita, { fmt: fmtBRLc })}</div>
-        ${(() => { // mesma anatomia dos outros cartões: label · valor · contexto · barra · linha da barra
-          const repMin = S.config.repasseMin || 38, repMax = S.config.repasseMax || 45;
-          return `<div class="card kpi" id="dash-kpi-repasse" title="Sua parte da receita do mês — a % final depende do resultado pessoal e do time">
-          <div class="kpi-label">💵 Repasse — ${esc(fmtMes(mk))} <button class="btn btn-sm icon-btn" id="edit-repasse" title="Editar a faixa de %" style="float:right">✏️</button></div>
-          <div class="kpi-value" style="font-size:24px">${fmtBRLc(receita * repMin / 100)} <span class="small muted" style="font-weight:500">a ${fmtBRLc(receita * repMax / 100)}</span></div>
-          <div class="kpi-sub">${pctBR(repMin / 100)}% a ${pctBR(repMax / 100)}% da receita de ${fmtBRLc(receita)}</div>
-          ${(() => { // barra: quanto falta pro repasse que você levaria BATENDO a meta de receita do mês
-            const alvoMin = (meta.receita || 0) * repMin / 100, alvoMax = (meta.receita || 0) * repMax / 100;
-            if (!(alvoMin > 0)) return `<div class="meter"><i style="width:0"></i></div>
-              <div class="row small" style="margin-top:6px"><span class="muted">defina a meta de receita em <a href="#/metas">Metas</a></span></div>`;
-            const pct = (receita * repMin / 100) / alvoMin;
-            const cls = pct >= 1 ? 'good' : pct >= 0.6 ? '' : pct >= 0.3 ? 'warn' : 'crit';
-            return `<div class="meter ${cls}"><i style="width:${Math.min(100, pct * 100)}%"></i></div>
-              <div class="row small mt" style="margin-top:6px">
-                <span class="dim mono">${esc(fmtPct(pct, 0))}</span><span class="spacer"></span>
-                <span class="muted mono">se bater a meta de receita: ${esc(fmtBRLc(alvoMin))} a ${esc(fmtBRLc(alvoMax))}</span>
-              </div>`;
-          })()}</div>`;
-        })()}
-        <div class="card kpi" id="dash-kpi-reu" style="cursor:pointer" title="Clique para abrir as Reuniões">
-          <div class="kpi-label">🥇 1ªs reuniões — ${esc(fmtMes(mk))} <span style="float:right">›</span></div>
-          <div class="kpi-value" style="font-size:24px;color:${primeirasReunioesNoMes(mk) >= (S.config.metaReuniao1 || 12) ? 'var(--good-text)' : 'inherit'}">${primeirasReunioesNoMes(mk)} <span class="small muted" style="font-weight:500">de ${S.config.metaReuniao1 || 12}</span></div>
-          <div class="kpi-sub">meta mensal de primeiras reuniões</div>
-          ${meterHTML(primeirasReunioesNoMes(mk), S.config.metaReuniao1 || 12, { fmt: v => Math.round(v) + '' })}</div>
-      </div>
-
-      <div class="grid g2 mb">
+      `<div class="grid g2 mb">
         <div class="card"><div class="card-title">📏 Régua — quem precisa de você agora
             <span class="spacer"></span><a href="#/regua" class="small">ver todos ›</a></div>
           ${criticos.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>${criticos.slice(0, 6).map(x => `
@@ -2341,7 +2405,7 @@ Pages.dashboard = {
             </tr>`).join('')}</tbody></table></div>` : '<div class="empty">🌟 Nenhum cliente em atraso — régua em dia!</div>'}
         </div>
         <div class="grid" style="grid-template-rows:auto auto">
-          <div class="card"><div class="card-title">🎂 Aniversários — próximos 30 dias</div>
+          <div class="card" id="card-nivers"><div class="card-title">🎂 Aniversários — próximos 30 dias</div>
             ${nivers.length ? `<div class="pill-row">${nivers.slice(0, 8).map(x => `
               <span class="chip ${x.aniv.dias <= 3 ? 'chip-acc' : 'chip-tag'}" style="cursor:pointer;padding:5px 11px" data-cli-chip="${x.c.id}">
                 ${x.aniv.dias === 0 ? '🎉 HOJE' : fmtDateShort(x.aniv.data)} · ${esc(nomeCurto(nomeExib(x.c)))}${idade(x.c.aniversario) != null ? ' (' + (idade(x.c.aniversario) + (x.aniv.dias > 0 ? 1 : 0)) + ')' : ''}</span>`).join('')}</div>`
@@ -2365,7 +2429,7 @@ Pages.dashboard = {
       <div class="grid g2 mb">
         <div class="card"><div class="card-title">📊 Evolução da captação</div>
           ${chartColumns({ items: evolucao, height: 200 })}</div>
-        <div class="card"><div class="card-title">⏰ Cobrar retorno — leads parados
+        <div class="card" id="card-cobrar"><div class="card-title">⏰ Cobrar retorno — leads parados
             <span class="spacer"></span><a href="#/pipeline" class="small">pipeline ›</a></div>
           ${cobrar.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>${cobrar.slice(0, 6).map(x => `
             <tr class="click" data-lead="${x.l.id}">
@@ -2376,13 +2440,10 @@ Pages.dashboard = {
         </div>
       </div>
 
-      <div class="grid g3">
+      <div class="grid g2">
         <div class="card"><div class="card-title">🎯 Funil de prospecção</div>${chartFunnel({ stages: funil })}</div>
         <div class="card"><div class="card-title">🌱 Leads por origem</div>
           ${origens.length ? chartHBars({ items: origens, format: v => v + ' leads', fmtTip: i => i.valor + ' leads', labelW: 120 }) : '<div class="empty">Classifique os leads na caixa 📥 do Pipeline para ver o que converte.</div>'}</div>
-        <div class="card"><div class="card-title">🏦 Concentração da carteira</div>
-          ${chartDonut({ items: donutItems, centro: { valor: fmtCompact(patTotal), label: 'total' }, fmtLeg: i => fmtCompact(i.valor) })}
-          <p class="small muted mt">Top 5 clientes = <b class="dim">${fmtPct(pctTop5, 0)}</b> da carteira${pctTop5 > 0.7 ? ' — concentração alta, cuide bem deles e diversifique a base' : ''}.</p></div>
       </div>
 
       <div class="card mt"><div class="card-title">🗣️ Assuntos mais tratados
@@ -2407,7 +2468,11 @@ Pages.dashboard = {
     const kpiReu = el.querySelector('#dash-kpi-reu');
     if (kpiReu) kpiReu.onclick = () => nav('reunioes');
     const editRep = el.querySelector('#edit-repasse');
-    if (editRep) editRep.onclick = () => modalFaixaRepasse();
+    if (editRep) editRep.onclick = e => { e.stopPropagation(); modalFaixaRepasse(); };
+    const rolarPara = sel => { const alvo = el.querySelector(sel); if (alvo) alvo.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+    const btN = el.querySelector('#bt-niver'); if (btN) btN.onclick = () => rolarPara('#card-nivers');
+    const btL = el.querySelector('#bt-leads'); if (btL) btL.onclick = () => rolarPara('#card-cobrar');
+    const btR = el.querySelector('#bt-regua'); if (btR) btR.onclick = () => nav('regua');
     const btnPresas = el.querySelector('#aplicar-presas');
     if (btnPresas) btnPresas.onclick = () => confirmar('Aplicar captações ao patrimônio',
       `Somar ao patrimônio dos clientes as <b>${presas.length}</b> captação(ões) que você lançou e ainda não entraram (${fmtBRL(totalPresas)} líquido)? As captações da <b>planilha</b> não são tocadas.`,
