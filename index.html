@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; manifest-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://vuavvleoqunporytyguj.supabase.co; worker-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; manifest-src 'self'">
 <title>InvestMax</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
 <link rel="manifest" href="manifest.webmanifest">
@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v19 \u00b7 13/10 17:55";</script>
+<script>window.__APPVER__ = "investmax-v20 \u00b7 14/10 23:29";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -816,6 +816,7 @@ const Store = {
       this.dirty = false;
       const el = document.getElementById('save-ind');
       if (el) el.innerHTML = '<span class="save-dot">●</span> Salvo ' + this.lastSaved.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      if (window.Sync) Sync.agendar(); // sincronização ligada: manda (cifrado) pros outros aparelhos
       return true;
     } catch (e) {
       if (!silencioso) alert('ATENÇÃO: não consegui salvar os dados (' + e.message + ').\nFaça um backup pelo menu Configurações imediatamente.');
@@ -6775,6 +6776,7 @@ Pages.config = {
       </div>`;
     } else {
       corpo = `<div class="grid g2">
+        ${window.Sync ? Sync.cardHTML() : ''}
         <div class="card"><div class="card-title">🔄 Versão do app</div>
           <p class="small muted mb">Versão instalada: <b>${window.__APPVER__ || '—'}</b></p>
           <div class="row"><button class="btn btn-primary" id="btn-atualizar">🔄 Buscar atualização</button></div>
@@ -6806,8 +6808,8 @@ Pages.config = {
             <tr><td>Alocações</td><td class="num">${S.alocacoes.length}</td></tr>
             <tr><td>Tamanho no navegador</td><td class="num">${(JSON.stringify(S).length / 1024).toFixed(0)} KB</td></tr>
           </tbody></table></div>
-          <p class="small muted mt">Os dados moram no navegador deste computador (não vão para a internet).
-            Se limpar o histórico/dados do navegador, eles somem — por isso, baixe backups.</p></div>
+          <p class="small muted mt">${window.Sync && Sync.ativo() ? 'Os dados moram neste aparelho e vão <b>cifrados</b> para os seus outros aparelhos (o servidor não consegue ler).' : 'Os dados moram neste aparelho (não vão para a internet).'}
+            Se limpar os dados do navegador/app, eles somem${window.Sync && Sync.ativo() ? ' daqui (os outros aparelhos e o cofre cifrado continuam com eles)' : ' — por isso, baixe backups'}.</p></div>
         <div class="card"><div class="card-title">⚠️ Zona de perigo</div>
           <p class="small dim mb">Ações irreversíveis (fora os pontos de restauração).</p>
           <div class="row wrap">
@@ -6822,6 +6824,8 @@ Pages.config = {
       ${corpo}`;
 
     el.querySelectorAll('#abas-cfg button').forEach(b => b.onclick = () => { UI.abaConfig = b.getAttribute('data-aba'); renderApp(); });
+
+    if (window.Sync) Sync.wireCard(el);
 
     /* buscar atualização (força o service worker a pegar a versão mais nova) */
     const btnUp = el.querySelector('#btn-atualizar');
@@ -7115,6 +7119,283 @@ Pages.config = {
 })();
 
 
+/* ===== sync.js ===== */
+/* ============ módulo: sincronização entre aparelhos (cifrada ponta a ponta) ============ */
+/* Só no build PWA. Os dados são cifrados NO APARELHO (AES-GCM 256) com uma chave derivada do
+   "código de sincronização"; o servidor recebe e guarda apenas texto cifrado. O endereço do cofre
+   também sai do código — sem o código ninguém acha nem lê nada (nem o servidor, nem quem programou).
+   Regras: nunca perder dado (conflito guarda ponto de restauração), envio automático com nova tentativa. */
+'use strict';
+
+const SYNC_URL = 'https://vuavvleoqunporytyguj.supabase.co';
+const SYNC_KEY = 'sb_publishable_Di17a51xxZ1ZD88TRiLkbA_TJzJNZFy'; // chave pública do servidor (por natureza) — quem protege é a cifra + o código
+const LS_SYNC = 'investmax_sync';          // { id, k, cod } — só existe com a sincronização ligada neste aparelho
+const LS_SYNC_REV = 'investmax_sync_rev';  // última versão do cofre que este aparelho tem
+const LS_SYNC_PEND = 'investmax_sync_pend'; // '1' = há alteração local ainda não enviada
+const SYNC_ALFABETO = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // sem 0/O, 1/I/L (evita confusão ao digitar)
+
+const Sync = {
+  cfg: null, chave: null,
+  timer: null, retry: null, intervalo: null,
+  enviando: false, geracao: 0, _aplicando: false, _aplicarDepois: null,
+  status: 'ok', ultimo: null,
+
+  /* ---------- utilidades ---------- */
+  _b64(buf) { const b = new Uint8Array(buf); let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); },
+  _deB64(s) { const bin = atob(s); const b = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i); return b; },
+  normalizarCodigo(c) { return String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); },
+  formatarCodigo(c) { return this.normalizarCodigo(c).match(/.{1,5}/g).join('-'); },
+  gerarCodigo() {
+    const r = crypto.getRandomValues(new Uint32Array(20));
+    return Array.from(r, n => SYNC_ALFABETO[n % SYNC_ALFABETO.length]).join(''); // ~99 bits
+  },
+  async derivar(codigo) { // código → chave AES (256) + id do cofre (sha-256 da outra metade)
+    const enc = new TextEncoder();
+    const base = await crypto.subtle.importKey('raw', enc.encode(this.normalizarCodigo(codigo)), 'PBKDF2', false, ['deriveBits']);
+    const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: enc.encode('investmax-sync-v1'), iterations: 200000, hash: 'SHA-256' }, base, 512));
+    const idHash = new Uint8Array(await crypto.subtle.digest('SHA-256', bits.slice(32)));
+    return { k: this._b64(bits.slice(0, 32)), id: Array.from(idHash, b => b.toString(16).padStart(2, '0')).join('') };
+  },
+  async _chaveAes() {
+    if (!this.chave) this.chave = await crypto.subtle.importKey('raw', this._deB64(this.cfg.k), 'AES-GCM', false, ['encrypt', 'decrypt']);
+    return this.chave;
+  },
+  async cifrar(texto) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await this._chaveAes(), new TextEncoder().encode(texto));
+    return JSON.stringify({ v: 1, iv: this._b64(iv), ct: this._b64(ct) });
+  },
+  async decifrar(blob) {
+    const o = JSON.parse(blob);
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: this._deB64(o.iv) }, await this._chaveAes(), this._deB64(o.ct));
+    return new TextDecoder().decode(pt);
+  },
+  async rpc(nome, corpo) {
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const t = ctl ? setTimeout(() => ctl.abort(), 20000) : null;
+    try {
+      const r = await fetch(SYNC_URL + '/rest/v1/rpc/' + nome, {
+        method: 'POST', signal: ctl ? ctl.signal : undefined,
+        headers: { apikey: SYNC_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify(corpo),
+      });
+      if (!r.ok) throw new Error('servidor respondeu ' + r.status);
+      return await r.json();
+    } finally { if (t) clearTimeout(t); }
+  },
+
+  /* ---------- estado local ---------- */
+  ativo() { return !!this.cfg; },
+  carregar() { try { this.cfg = JSON.parse(localStorage.getItem(LS_SYNC) || 'null'); } catch (e) { this.cfg = null; } this.chave = null; return this.cfg; },
+  rev() { return +localStorage.getItem(LS_SYNC_REV) || 0; },
+  setRev(n) { localStorage.setItem(LS_SYNC_REV, String(n)); },
+  pendente() { return localStorage.getItem(LS_SYNC_PEND) === '1'; },
+  setPendente(b) { if (b) localStorage.setItem(LS_SYNC_PEND, '1'); else localStorage.removeItem(LS_SYNC_PEND); },
+
+  /* ---------- indicador no rodapé do menu ---------- */
+  indicadorAtual() {
+    if (!this.ativo()) return '<span class="save-dot">●</span> Dados salvos neste aparelho';
+    if (this.status === 'enviando') return '<span class="save-dot" style="color:var(--warn)">●</span> Sincronizando…';
+    if (this.status === 'offline') return '<span class="save-dot" style="color:var(--warn)">●</span> Sem internet — sincroniza sozinho quando voltar';
+    if (this.status === 'erro') return '<span class="save-dot" style="color:var(--crit)">●</span> Sincronização com problema — veja Configurações';
+    return '<span class="save-dot">●</span> ☁️ Sincronizado' + (this.ultimo ? ' ' + this.ultimo.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '');
+  },
+  _status(s) { this.status = s; if (s === 'ok') this.ultimo = new Date(); const el = document.getElementById('save-ind'); if (el) el.innerHTML = this.indicadorAtual(); },
+
+  /* ---------- envio ---------- */
+  agendar() { // chamado a cada gravação local
+    if (!this.ativo() || this._aplicando) return;
+    this.geracao++;
+    this.setPendente(true);
+    this._status('enviando');
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.enviar(), 1200);
+  },
+  async enviar() {
+    if (!this.ativo()) return;
+    if (this.enviando) { clearTimeout(this.timer); this.timer = setTimeout(() => this.enviar(), 800); return; }
+    this.enviando = true; clearTimeout(this.retry);
+    const gen = this.geracao;
+    try {
+      const blob = await this.cifrar(JSON.stringify(Store.state));
+      const res = +(await this.rpc('cofre_gravar', { p_id: this.cfg.id, p_blob: blob, p_rev_base: this.rev() }));
+      if (res > 0) {
+        this.setRev(res);
+        if (gen === this.geracao) { this.setPendente(false); this._status('ok'); }
+        else { this.enviando = false; return this.enviar(); } // mexeu durante o envio: manda de novo
+      } else if (res < 0) {
+        this.enviando = false; return this.puxar(); // o outro aparelho gravou antes: resolve pelo puxar
+      } else {
+        this._status('erro'); // cofre não existe mais no servidor
+      }
+    } catch (e) {
+      this._status(navigator.onLine === false ? 'offline' : 'offline');
+      this.retry = setTimeout(() => this.enviar(), 8000);
+    }
+    this.enviando = false;
+  },
+
+  /* ---------- recebimento ---------- */
+  async puxar() {
+    if (!this.ativo() || this.enviando) return;
+    try {
+      const remoto = +(await this.rpc('cofre_rev', { p_id: this.cfg.id }));
+      const local = this.rev();
+      if (remoto === 0) { this._status('erro'); return; }
+      if (remoto > local) {
+        const linhas = await this.rpc('cofre_ler', { p_id: this.cfg.id });
+        if (!linhas || !linhas[0]) return;
+        const txt = await this.decifrar(linhas[0].blob);
+        this.aplicar(txt, +linhas[0].rev);
+      } else if (remoto < local) { // cofre "voltou no tempo" (raro): este aparelho tem o mais novo → regrava
+        this.setRev(remoto); this.setPendente(true); this.enviar();
+      } else if (this.pendente()) this.enviar();
+      else this._status('ok');
+    } catch (e) {
+      this._status('offline');
+    }
+  },
+  aplicar(txt, novoRev) {
+    if (typeof _modais !== 'undefined' && _modais.length) { // não troca os dados com uma janela aberta: espera fechar
+      this._aplicarDepois = [txt, novoRev];
+      clearTimeout(this._esperaModal);
+      this._esperaModal = setTimeout(() => { const p = this._aplicarDepois; this._aplicarDepois = null; if (p) this.aplicar(p[0], p[1]); }, 2500);
+      return;
+    }
+    const conflito = this.pendente();
+    if (conflito) Store.takeSnapshot('Antes de receber do outro aparelho (alterações deste aparelho que não subiram)');
+    const novo = Store.migrate(JSON.parse(txt));
+    this._aplicando = true;
+    try {
+      Store.state = novo; S = novo;
+      Store.persist(true);
+    } finally { this._aplicando = false; }
+    this.setRev(novoRev); this.setPendente(false); this.geracao++;
+    this._status('ok');
+    renderApp();
+    if (conflito) toast('⚠️ O outro aparelho tinha alterações mais novas e elas foram trazidas para cá. O que você mexeu aqui sem internet ficou guardado em Configurações → Backup → pontos de restauração.', 'warn');
+  },
+
+  /* ---------- ciclo de vida ---------- */
+  iniciar() {
+    this.carregar();
+    if (!this.ativo()) return;
+    this._status(this.pendente() ? 'enviando' : 'ok');
+    this.puxar();
+    clearInterval(this.intervalo);
+    this.intervalo = setInterval(() => { if (!document.hidden) this.puxar(); }, 30000);
+    if (!this._ouvindo) {
+      this._ouvindo = true;
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) this.puxar(); });
+      window.addEventListener('online', () => this.puxar());
+    }
+  },
+  async ativarNovo() { // 1º aparelho: cria o cofre com os dados daqui
+    const cod = this.gerarCodigo();
+    const d = await this.derivar(cod);
+    this.cfg = { id: d.id, k: d.k, cod }; this.chave = null;
+    const blob = await this.cifrar(JSON.stringify(Store.state));
+    const res = +(await this.rpc('cofre_gravar', { p_id: d.id, p_blob: blob, p_rev_base: 0 }));
+    if (res !== 1) { this.cfg = null; throw new Error('não consegui criar o cofre'); }
+    localStorage.setItem(LS_SYNC, JSON.stringify(this.cfg));
+    this.setRev(1); this.setPendente(false);
+    this.iniciar();
+    return cod;
+  },
+  async conferirCodigo(cod) { // outro aparelho: o código existe? (devolve o rev ou 0)
+    const d = await this.derivar(cod);
+    const rev = +(await this.rpc('cofre_rev', { p_id: d.id }));
+    return { d, rev };
+  },
+  async entrar(cod, d) {
+    this.cfg = { id: d.id, k: d.k, cod: this.normalizarCodigo(cod) }; this.chave = null;
+    const linhas = await this.rpc('cofre_ler', { p_id: d.id });
+    if (!linhas || !linhas[0]) { this.cfg = null; throw new Error('cofre vazio'); }
+    let txt;
+    try { txt = await this.decifrar(linhas[0].blob); } catch (e) { this.cfg = null; throw new Error('código não abre este cofre'); }
+    Store.takeSnapshot('Antes de entrar na sincronização (dados que estavam neste aparelho)');
+    localStorage.setItem(LS_SYNC, JSON.stringify(this.cfg));
+    this.setPendente(false);
+    this.aplicar(txt, +linhas[0].rev);
+    this.iniciar();
+  },
+  desligar() {
+    localStorage.removeItem(LS_SYNC); localStorage.removeItem(LS_SYNC_REV); localStorage.removeItem(LS_SYNC_PEND);
+    clearInterval(this.intervalo); clearTimeout(this.timer); clearTimeout(this.retry);
+    this.cfg = null; this.chave = null; this._status('ok');
+  },
+
+  /* ---------- cartão em Configurações → Dados ---------- */
+  cardHTML() {
+    if (!this.ativo()) return `<div class="card"><div class="card-title">☁️ Sincronizar celular e iPad</div>
+      <p class="small muted mb">Liga a sincronização automática entre os seus aparelhos. Os dados são <b>trancados aqui dentro</b> com um código secreto antes de sair — o servidor guarda só um bloco ilegível.</p>
+      <div class="row wrap">
+        <button class="btn btn-primary" id="sync-ativar">☁️ Ativar neste aparelho</button>
+        <button class="btn" id="sync-entrar">🔑 Já tenho um código</button>
+      </div>
+      <p class="small muted mt"><b>Ative no aparelho que tem os dados certos</b> (o principal). Nos outros, use "Já tenho um código".</p></div>`;
+    return `<div class="card"><div class="card-title">☁️ Sincronizar celular e iPad <span class="chip chip-a">ligada</span></div>
+      <p class="small muted mb">Tudo que você muda aqui vai para os outros aparelhos em segundos (cifrado). Situação: <span id="sync-sit">${this.indicadorAtual()}</span></p>
+      <div class="row wrap">
+        <button class="btn btn-primary" id="sync-agora">🔄 Sincronizar agora</button>
+        <button class="btn" id="sync-codigo">🔑 Ver o código</button>
+        <button class="btn" id="sync-desligar">Desligar neste aparelho</button>
+      </div></div>`;
+  },
+  _mostrarCodigo(cod, novo) {
+    openModal({
+      title: novo ? '✅ Sincronização ligada — anote o código' : '🔑 Código de sincronização',
+      body: `<p class="dim">${novo ? 'Este é o código secreto dos seus dados. ' : ''}Para ligar outro aparelho: abra o InvestMax nele → <b>Configurações → Dados → ☁️ Sincronizar → Já tenho um código</b> e digite:</p>
+        <div style="font:700 22px/1.3 ui-monospace,Menlo,monospace;letter-spacing:1px;text-align:center;padding:16px;margin:14px 0;background:var(--surface2);border-radius:12px;user-select:all">${esc(this.formatarCodigo(cod))}</div>
+        <p class="small muted">Guarde num lugar seguro (ex.: nas Notas com senha). <b>Quem tiver este código consegue abrir os dados</b> — não mande pra ninguém. Se perder, dá pra ver de novo aqui em qualquer aparelho ligado.</p>`,
+      footer: `<span class="spacer"></span><button class="btn" data-act="copiar">📋 Copiar</button><button class="btn btn-primary" onclick="closeModal()">Pronto</button>`,
+      onOpen(el) {
+        el.querySelector('[data-act="copiar"]').onclick = async () => {
+          try { await navigator.clipboard.writeText(Sync.formatarCodigo(cod)); toast('📋 Código copiado.'); } catch (e) { toast('Não consegui copiar — selecione o código e copie.', 'err'); }
+        };
+      },
+    });
+  },
+  wireCard(el) {
+    const q = s => el.querySelector(s);
+    if (q('#sync-ativar')) q('#sync-ativar').onclick = () => confirmar('☁️ Ativar a sincronização',
+      'Os dados <b>deste aparelho</b> viram a base da sincronização. Depois é só digitar o código nos outros aparelhos (eles recebem estes dados).',
+      async () => {
+        toast('☁️ Ligando…');
+        try { const cod = await this.ativarNovo(); renderApp(); this._mostrarCodigo(cod, true); }
+        catch (e) { toast('Não consegui ligar agora (' + esc(e.message) + '). Confira a internet e tente de novo.', 'err'); }
+      }, { okLabel: 'Ativar' });
+    if (q('#sync-entrar')) q('#sync-entrar').onclick = () => openModal({
+      title: '🔑 Entrar com o código',
+      body: `<div class="fld"><label>Código de sincronização (do outro aparelho)</label>
+          <input id="sync-cod" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXXX-XXXXX-XXXXX-XXXXX" style="font-family:ui-monospace,Menlo,monospace;letter-spacing:1px"></div>
+        <p class="small muted">Os dados que estão <b>neste</b> aparelho serão trocados pelos do outro. Antes disso é feito um ponto de restauração automático.</p>`,
+      footer: `<span class="spacer"></span><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" data-act="ok">Entrar</button>`,
+      onOpen(m) {
+        m.querySelector('[data-act="ok"]').onclick = async () => {
+          const cod = m.querySelector('#sync-cod').value;
+          if (Sync.normalizarCodigo(cod).length !== 20) { toast('O código tem 20 letras/números (ex.: ABCDE-FGH23-…).', 'err'); return; }
+          const btn = m.querySelector('[data-act="ok"]'); btn.disabled = true; btn.textContent = 'Conferindo…';
+          try {
+            const { d, rev } = await Sync.conferirCodigo(cod);
+            if (!rev) { btn.disabled = false; btn.textContent = 'Entrar'; toast('Código não encontrado. Confira as letras com o outro aparelho.', 'err'); return; }
+            closeModal();
+            await Sync.entrar(cod, d);
+            toast('✅ Pronto! Este aparelho agora está sincronizado com o outro.');
+          } catch (e) { btn.disabled = false; btn.textContent = 'Entrar'; toast('Não consegui entrar (' + esc(e.message) + '). Confira a internet e o código.', 'err'); }
+        };
+      },
+    });
+    if (q('#sync-agora')) q('#sync-agora').onclick = async () => { this._status('enviando'); if (this.pendente()) await this.enviar(); else await this.puxar(); const s = q('#sync-sit'); if (s) s.innerHTML = this.indicadorAtual(); toast(this.status === 'ok' ? '✅ Sincronizado.' : '⚠️ Sem conexão agora — tento de novo sozinho.'); };
+    if (q('#sync-codigo')) q('#sync-codigo').onclick = () => this._mostrarCodigo(this.cfg.cod, false);
+    if (q('#sync-desligar')) q('#sync-desligar').onclick = () => confirmar('Desligar a sincronização neste aparelho',
+      'Os dados continuam aqui, mas param de ir e vir dos outros aparelhos. Dá pra religar depois com o código.',
+      () => { this.desligar(); renderApp(); toast('Sincronização desligada neste aparelho.'); }, { okLabel: 'Desligar' });
+  },
+};
+window.Sync = Sync;
+
+
 /* ===== app.js ===== */
 /* ============ aplicação: navegação, busca global, boot ============ */
 'use strict';
@@ -7155,7 +7436,7 @@ function renderApp() {
     <aside class="sidebar">
       <div class="side-logo"><div class="mark">📈</div><div><b>InvestMax</b><span>CRM do assessor</span></div></div>
       <nav class="side-nav">${links}</nav>
-      <div class="side-foot"><span id="save-ind">${window.Nuvem && Nuvem.sessao ? Nuvem.indicadorAtual() : '<span class="save-dot">●</span> Dados salvos neste computador'}</span>
+      <div class="side-foot"><span id="save-ind">${window.Nuvem && Nuvem.sessao ? Nuvem.indicadorAtual() : window.Sync ? Sync.indicadorAtual() : '<span class="save-dot">●</span> Dados salvos neste computador'}</span>
         ${window.Nuvem && Nuvem.sessao ? '<a href="#" id="btn-sair" class="small" style="margin-top:4px;display:inline-block">sair da conta</a>' : ''}
         ${window.__APPVER__ ? '<div class="small muted" style="margin-top:6px;opacity:.55;font-size:10px">' + window.__APPVER__ + '</div>' : ''}</div>
     </aside>
@@ -7253,6 +7534,7 @@ function checarViradaDeDia() {
 setInterval(checarViradaDeDia, 5 * 60 * 1000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checarViradaDeDia(); });
 function iniciarApp() {
+  if (window.Sync) Sync.carregar();
   UI.mesRef = mesAtual();
   if (Store.unificarSepreciso()) Store.save(); // clientes repetidos pelo nome → uma ficha com as contas juntas
   if (!S.metas[UI.mesRef]) { // garante que o mês atual sempre exista no mapa de metas
@@ -7260,6 +7542,7 @@ function iniciarApp() {
     Store.save();
   }
   renderApp();
+  if (window.Sync) Sync.iniciar(); // celular ⇄ iPad (cifrado ponta a ponta)
 }
 document.addEventListener('DOMContentLoaded', () => {
   if (window.Nuvem) { Nuvem.boot(); return; } // build online: login e nuvem primeiro (o boot chama iniciarApp)
