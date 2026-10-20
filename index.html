@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v20 \u00b7 14/10 23:29";</script>
+<script>window.__APPVER__ = "investmax-v21 \u00b7 20/10 15:52";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -2447,6 +2447,9 @@ Pages.dashboard = {
       (presas.length ? `<div class="warn-banner">🔄 <div><b>${presas.length} ${presas.length === 1 ? 'captação' : 'captações'} sua${presas.length === 1 ? '' : 's'} ainda não ${presas.length === 1 ? 'entrou' : 'entraram'} no patrimônio</b> (${fmtBRL(totalPresas)} líquido) — foram lançadas antes desta regra existir. <button class="btn btn-sm btn-primary" id="aplicar-presas">Aplicar agora</button><br><span class="small">As captações da planilha não são tocadas (já estão no saldo).</span></div></div>` : '') +
       (patCritico > 0 ? `<div class="warn-banner crit-banner">🚨 <div><b>${fmtBRL(patCritico)} em patrimônio com contato CRÍTICO</b> (mais de ${S.config.reguaFaixas.D} dias sem falar). Priorize a <a href="#/regua">Régua</a> hoje.</div></div>` : '') +
 
+      (window.Sync && !Sync.ativo() ? `<div class="warn-banner" id="banner-sync">☁️ <div><b>Seus dados estão só neste aparelho.</b> Ligue a sincronização para o celular e o iPad ficarem sempre iguais (cifrado — ninguém mais lê). <i>É uma vez só em cada aparelho.</i>
+        <div class="row wrap" style="margin-top:8px;gap:8px"><button class="btn btn-sm btn-primary" id="sync-ativar">☁️ Este é o aparelho com os dados certos — ativar</button><button class="btn btn-sm" id="sync-entrar">🔑 Já ativei no outro — tenho o código</button></div></div></div>` : '') +
+
       bentoHTML +
 
       /* 📣 avisos do dia: reunião de hoje, aniversário e retornos — nascem pendentes, baixa vai pro histórico */
@@ -2544,6 +2547,7 @@ Pages.dashboard = {
           : `<div class="empty">Registre contatos com <b>assuntos</b> (no 💬 Registrar contato) para ver aqui o que você mais trata${aper === 'mes' ? ' — ou veja <b>Tudo</b>' : ''}.</div>`}</div>`;
 
     wireMesNav(el);
+    if (window.Sync && !Sync.ativo()) Sync.wireCard(el); // botões do aviso de sincronização
     const kpiCap = el.querySelector('#dash-kpi-cap');
     if (kpiCap) kpiCap.onclick = () => { UI.abaProducao = 'captacao'; nav('producao'); };
     const kpiRec = el.querySelector('#dash-kpi-rec');
