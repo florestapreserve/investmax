@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v22 \u00b7 21/10 09:44";</script>
+<script>window.__APPVER__ = "investmax-v23 \u00b7 21/10 10:57";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -7320,6 +7320,12 @@ const Nuvem = {
 
   /* ---------- boot do modo online ---------- */
   async boot() {
+    const hErro = new URLSearchParams(location.hash.replace(/^#\/?/, ''));
+    if (hErro.get('error') || hErro.get('error_code')) { // link do e-mail vencido/já usado: o servidor volta com um erro no endereço
+      history.replaceState(null, '', location.pathname);
+      this.renderLogin('⚠️ Esse link do e-mail venceu ou já foi usado. Digite seu e-mail abaixo e toque em <b>Esqueci a senha</b> — chega um link novo na hora.');
+      return;
+    }
     const tk = this.hashAuth();
     if (tk && (tk.type === 'invite' || tk.type === 'recovery' || tk.type === 'signup')) { this.renderDefinirSenha(tk); return; }
     if (!this.carregarSessao()) { this.renderLogin(); return; }
@@ -7468,6 +7474,7 @@ function rotaAtual() {
 function nav(rota) { location.hash = '#/' + rota; }
 
 function renderApp() {
+  if (!S) return; // ainda na tela do PIN/login (ex.: o endereço mudou pelo link do e-mail): nada a montar
   const { rota, params } = rotaAtual();
   const page = Pages[rota] || Pages.dashboard;
   const app = document.getElementById('app');
