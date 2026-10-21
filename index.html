@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v24 \u00b7 21/10 11:13";</script>
+<script>window.__APPVER__ = "investmax-v25 \u00b7 21/10 15:53";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -729,7 +729,7 @@ const Store = {
     for (const a of st.alocacoes) { if (!a.tipoReceita) a.tipoReceita = 'cabeca'; if (a.ativo === undefined) a.ativo = a.produto || null; if (a.emissor === undefined) a.emissor = null; }
     for (const p of st.recorrentes) { if (p.ativo === undefined) p.ativo = null; if (p.emissor === undefined) p.emissor = null; }
     for (const c of st.captacoes) if (!c.tipo) c.tipo = 'entrada';
-    for (const c of st.clientes) if (c.potencialMercado === undefined) c.potencialMercado = null;
+    for (const c of st.clientes) { if (c.potencialMercado === undefined) c.potencialMercado = null; if (c.mercadoOnde === undefined) c.mercadoOnde = null; if (c.mercadoEm === undefined) c.mercadoEm = null; } // valor no mercado (fora) + onde está + quando foi informado
     for (const l of st.leads) {
       if (l.email === undefined) l.email = null;
       if (l.retornarEm === undefined) l.retornarEm = null;
@@ -3010,23 +3010,39 @@ function modalEditarCliente(id, aoSalvar) {
   });
 }
 
-/* edição rápida do "Potencial no mercado" direto pela ficha (um toque) */
+/* 💼 valor no mercado (dinheiro do cliente FORA da carteira) + onde está — edição de um toque */
+const INSTITUICOES_PADRAO = ['XP', 'Itaú', 'Bradesco', 'Santander', 'Banco do Brasil', 'Caixa', 'Nubank', 'Inter', 'Safra', 'Sicredi', 'Sicoob', 'C6', 'Modal', 'Genial', 'Rico', 'Ágora', 'Previdência (outra)', 'Imóveis', 'Exterior'];
+function listaInstituicoes() {
+  const vistos = new Map();
+  for (const n of INSTITUICOES_PADRAO) vistos.set(foldTxt(n), n);
+  for (const c of S.clientes) for (const p of String(c.mercadoOnde || '').split(/[,;/+]/)) { const t = p.trim(); if (t && !vistos.has(foldTxt(t))) vistos.set(foldTxt(t), t); }
+  return [...vistos.values()].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
 function modalPotencial(id) {
   const c = getCliente(id);
   if (!c) return;
   openModal({
-    title: '🔮 Potencial no mercado — ' + esc(nomeExib(c)),
-    body: `<p class="small muted" style="margin-top:0">Quanto o cliente tem investido <b>lá fora</b> (fora da sua carteira). Aparece na ficha e ajuda a priorizar quem tem mais a trazer.</p>
-      ${moneyFld({ id: 'pot', label: 'Potencial no mercado (R$)', value: c.potencialMercado != null ? c.potencialMercado : '', hint: 'ex.: 8.000.000 ou 8M · deixe vazio para limpar' })}`,
+    title: '💼 Valor no mercado — ' + esc(nomeExib(c)),
+    body: `<p class="small muted" style="margin-top:0">Quanto o cliente tem investido <b>fora da sua carteira</b> e onde está. Entra na análise <b>Clientes → 💼 Dinheiro fora</b> pra você saber quem cobrar.</p>
+      <div class="form-grid">
+      ${moneyFld({ id: 'pot', label: 'Valor no mercado (R$)', value: c.potencialMercado != null ? c.potencialMercado : '', hint: 'ex.: 8.000.000 ou 8M · vazio = não sei' })}
+      <div class="fld"><label>Onde está</label><input data-f="onde" list="dl-instituicoes" value="${esc(c.mercadoOnde || '')}" placeholder="ex.: XP, Itaú">
+        <datalist id="dl-instituicoes">${listaInstituicoes().map(x => `<option value="${esc(x)}">`).join('')}</datalist>
+        <div class="hint">pode pôr mais de um, separado por vírgula</div></div>
+      </div>
+      ${c.mercadoEm ? `<p class="small muted">Última atualização: ${fmtDate(c.mercadoEm)}</p>` : ''}`,
     footer: `<button class="btn" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" data-act="ok">Salvar</button>`,
     onOpen(el) {
       const inp = el.querySelector('[data-f="pot"]'); if (inp) inp.focus();
       el.querySelector('[data-act="ok"]').onclick = () => {
-        const v = String(readForm(el).pot || '').trim();
+        const f = readForm(el);
+        const v = String(f.pot || '').trim();
         const pot = v ? parseValor(v) : null;
         if (v && isNaN(pot)) { toast('Valor inválido — use ex.: 8.000.000 ou 8M', 'err'); return; }
         c.potencialMercado = pot;
-        closeModal(); toast('🔮 Potencial no mercado atualizado'); Store.commit();
+        c.mercadoOnde = String(f.onde || '').trim() || null;
+        c.mercadoEm = hoje();
+        closeModal(); toast('💼 Valor no mercado atualizado'); Store.commit();
       };
     },
   });
@@ -3107,6 +3123,7 @@ Pages.clientes = {
   render(el, params) {
     if (params && params[0]) return renderCliente360(el, params[0]);
     if (UI.clientesVisao === 'resultado') return renderResultadoClientes(el);
+    if (UI.clientesVisao === 'fora') return renderDinheiroFora(el);
 
     let lista = S.clientes.map(c => ({
       c, nome: c.nome, pat: clientePatrimonio(c),
@@ -3144,6 +3161,7 @@ Pages.clientes = {
       `<div class="seg" id="seg-cli-visao">
         <button class="active" data-cv="lista">👥 Lista</button>
         <button data-cv="resultado">📊 Resultado por cliente</button>
+        <button data-cv="fora">💼 Dinheiro fora</button>
       </div>
       <button class="btn btn-primary" id="novo-cli">➕ Novo cliente</button>`) +
       (() => { // dash simples no topo (veio do Dashboard): patrimônio + clientes + contas
@@ -3292,6 +3310,7 @@ function renderResultadoClientes(el) {
     `<div class="seg" id="seg-cli-visao">
       <button data-cv="lista">👥 Lista</button>
       <button class="active" data-cv="resultado">📊 Resultado por cliente</button>
+      <button data-cv="fora">💼 Dinheiro fora</button>
     </div>`) +
     `<div class="card">
       <div class="row wrap mb">
@@ -3489,9 +3508,14 @@ function renderCliente360(el, id) {
     </div>
 
     <div class="grid g4 mb">
-      <div class="card kpi"><div class="kpi-label">Patrimônio total</div>
+      <div class="card kpi"><div class="kpi-label">Patrimônio total <span class="muted">(com você)</span></div>
         <div class="kpi-value">${fmtBRL(pat)}</div>
-        <div class="kpi-sub">${c.contas.length} conta${c.contas.length === 1 ? '' : 's'}</div></div>
+        <div class="kpi-sub">${c.contas.length} conta${c.contas.length === 1 ? '' : 's'}</div>
+        <div class="kpi-sub" id="edit-potencial" style="margin-top:9px;border-top:1px solid var(--line);padding-top:9px;cursor:pointer" title="Tocar para informar o valor no mercado">💼 <b>No mercado (fora):</b>
+          ${c.potencialMercado != null
+            ? `<b style="color:var(--accent-strong)">${fmtBRL(c.potencialMercado)}</b>${c.mercadoOnde ? ' · ' + esc(c.mercadoOnde) : ''}
+               <div class="small muted" style="margin-top:2px">${pat + c.potencialMercado > 0 ? 'com você: <b>' + fmtPct(pat / (pat + c.potencialMercado), 0) + '</b> do total' : ''}${c.mercadoEm ? ' · atualizado ' + fmtDateShort(c.mercadoEm) : ''} · <span style="color:var(--accent-strong)">✏️ editar</span></div>`
+            : '<span style="color:var(--accent-strong)">✏️ toque para informar quanto e onde</span>'}</div></div>
       <div class="card kpi"><div class="kpi-label">📈 Receita gerada</div>
         <div class="kpi-value" style="color:var(--good-text)">${fmtBRL(recTotal)}</div>
         <div class="kpi-sub">Lifetime · tudo que já rendeu</div></div>
@@ -3520,9 +3544,7 @@ function renderCliente360(el, id) {
         <div class="kpi"><div class="kpi-label">💰 Quanto já trouxe ${esc(rotuloFiltro)}</div>
           <div class="kpi-value" style="font-size:22px;color:${capFiltro.liquido >= 0 ? 'inherit' : 'var(--crit)'}">${fmtBRL(capFiltro.liquido)}</div>
           <div class="kpi-sub">⬇️ ${fmtBRL(capFiltro.entradas)} · ⬆️ ${fmtBRL(capFiltro.saidas)}${temFiltro ? ' · total geral: ' + fmtBRL(captacaoCliente(id, null).liquido) : ''}</div>
-          <div class="kpi-sub" id="edit-potencial" style="margin-top:9px;border-top:1px solid var(--line);padding-top:9px;cursor:pointer" title="Tocar para definir o potencial">🔮 Potencial no mercado:
-            <b>${c.potencialMercado != null ? fmtBRL(c.potencialMercado) : '—'}</b>
-            ${c.potencialMercado != null ? '<span class="muted"> ainda lá fora · <span style="color:var(--accent-strong)">✏️ editar</span></span>' : '<span style="color:var(--accent-strong)"> ✏️ toque para definir</span>'}</div></div>
+</div>
         <div class="kpi"><div class="kpi-label">📈 Receita feita ${temFiltro ? esc(rotuloFiltro) : '(acumulada)'}</div>
           <div class="kpi-value" style="font-size:22px;color:var(--good-text)">${fmtBRLc(temFiltro ? recFiltro : recTotal)}</div>
           <div class="kpi-sub">${temFiltro ? 'acumulada: ' + fmtBRLc(recTotal) : 'neste mês: ' + fmtBRLc(recMesAtual)}</div></div>
@@ -3622,6 +3644,71 @@ function renderCliente360(el, id) {
       nav('clientes'); Store.commit();
     }, { danger: true, okLabel: 'Excluir cliente' });
   };
+}
+
+
+/* ---------- 💼 Dinheiro fora: quem tem valor no mercado (fora da carteira) — pra priorizar a cobrança ---------- */
+function renderDinheiroFora(el) {
+  const modo = UI.foraModo === 'sem' ? 'sem' : 'com';
+  const todos = S.clientes.map(c => {
+    const pat = clientePatrimonio(c), fora = c.potencialMercado != null ? c.potencialMercado : null;
+    return { c, nome: nomeSemConta(c), pat, fora, onde: c.mercadoOnde || '', pctCom: fora != null && pat + fora > 0 ? pat / (pat + fora) : null, r: reguaCliente(c, null), em: c.mercadoEm || '' };
+  });
+  const com = todos.filter(x => x.fora > 0), sem = todos.filter(x => x.fora == null);
+  const st = sortState('fora', 'fora');
+  const lista = (modo === 'com' ? com : sem).slice().sort(cmpBy(st.col, st.dir));
+  const totFora = somar(com, x => x.fora), totComEles = somar(com, x => x.pat);
+  const porOnde = {};
+  for (const x of com) {
+    const locais = String(x.onde || '').split(/[,;/+]/).map(t => t.trim()).filter(Boolean);
+    const ls = locais.length ? locais : ['(não informado)'];
+    for (const l of ls) { const k = foldTxt(l); if (!porOnde[k]) porOnde[k] = { nome: l, valor: 0, n: 0 }; porOnde[k].valor += x.fora / ls.length; porOnde[k].n++; }
+  }
+  const ondeOrd = Object.values(porOnde).sort((a, b) => b.valor - a.valor);
+  el.innerHTML = pageHead('👥 Clientes', `💼 Dinheiro fora — ${com.length} cliente${com.length === 1 ? '' : 's'} com ${fmtBRL(totFora)} no mercado`,
+    `<div class="seg" id="seg-cli-visao">
+      <button data-cv="lista">👥 Lista</button>
+      <button data-cv="resultado">📊 Resultado por cliente</button>
+      <button class="active" data-cv="fora">💼 Dinheiro fora</button>
+    </div>`) +
+    `<div class="grid g3 mb">
+      <div class="card kpi"><div class="kpi-label">💼 Total no mercado (fora)</div>
+        <div class="kpi-value" style="font-size:22px;color:var(--accent-strong)">${fmtBRL(totFora)}</div>
+        <div class="kpi-sub">${com.length} cliente${com.length === 1 ? '' : 's'} · dá pra trazer</div></div>
+      <div class="card kpi"><div class="kpi-label">🤝 Com você (desses clientes)</div>
+        <div class="kpi-value" style="font-size:22px">${totFora + totComEles > 0 ? fmtPct(totComEles / (totFora + totComEles), 0) : '—'}</div>
+        <div class="kpi-sub">${fmtBRL(totComEles)} com você de ${fmtBRL(totFora + totComEles)}</div></div>
+      <div class="card kpi"><div class="kpi-label">🏦 Onde está</div>
+        ${ondeOrd.length ? ondeOrd.slice(0, 4).map(o => `<div class="row small" style="padding:2px 0"><span>${esc(o.nome)}</span><span class="spacer"></span><b class="mono">${esc(fmtCompact(o.valor))}</b></div>`).join('') : '<div class="kpi-sub">Informe "onde está" nas fichas.</div>'}</div>
+    </div>
+    <div class="card">
+      <div class="row wrap mb">
+        <div class="seg" id="seg-fora">
+          <button class="${modo === 'com' ? 'active' : ''}" data-fm="com">💼 Com valor fora (${com.length})</button>
+          <button class="${modo === 'sem' ? 'active' : ''}" data-fm="sem">❔ Sem valor informado (${sem.length})</button>
+        </div>
+      </div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr>
+        ${thSort('fora', 'nome', 'Cliente')}${thSort('fora', 'pat', 'Com você', 'right')}${thSort('fora', 'fora', 'Fora (mercado)', 'right')}<th>Onde está</th>${thSort('fora', 'pctCom', '% com você', 'right')}<th class="center">Régua</th>${thSort('fora', 'em', 'Atualizado', 'right')}<th></th>
+      </tr></thead><tbody>${lista.map(x => `<tr class="click" data-cli="${x.c.id}">
+        <td><b>${esc(x.nome)}</b></td>
+        <td class="num">${fmtBRL(x.pat)}</td>
+        <td class="num">${x.fora != null ? '<b style="color:var(--accent-strong)">' + fmtBRL(x.fora) + '</b>' : '<span class="muted">—</span>'}</td>
+        <td>${x.onde ? esc(x.onde) : '<span class="muted">—</span>'}</td>
+        <td class="num">${x.pctCom != null ? fmtPct(x.pctCom, 0) : '—'}</td>
+        <td class="center">${chipRegua(x.r.nota, x.r.data ? 'Último contato ' + fmtDate(x.r.data) : 'Nunca contatado')}</td>
+        <td class="num small muted">${x.em ? fmtDateShort(x.em) : '—'}</td>
+        <td class="right" style="white-space:nowrap"><button class="btn btn-sm" data-pot="${x.c.id}" title="Informar valor e onde está">✏️</button> <button class="btn btn-sm" data-contato="${x.c.id}" title="Registrar contato">💬</button></td>
+      </tr>`).join('') || `<tr><td colspan="8">${emptyState('💼', modo === 'com' ? 'Nenhum cliente com valor no mercado informado ainda — abra uma ficha e toque em "No mercado (fora)".' : 'Todos os clientes têm o valor no mercado informado. 👏')}</td></tr>`}</tbody>
+      ${modo === 'com' && lista.length ? `<tfoot><tr><td>Total</td><td class="num">${fmtBRL(totComEles)}</td><td class="num">${fmtBRL(totFora)}</td><td colspan="5"></td></tr></tfoot>` : ''}</table></div>
+      <p class="small muted mt">${modo === 'com' ? 'Ordenado por quem tem mais fora — comece a cobrança pelo topo. ' : 'Vale perguntar na próxima conversa quanto e onde eles têm fora. '}✏️ informa o valor e onde está · 💬 registra o contato.</p>
+    </div>`;
+  el.querySelectorAll('#seg-cli-visao button').forEach(b => b.onclick = () => { UI.clientesVisao = b.getAttribute('data-cv'); renderApp(); });
+  el.querySelectorAll('#seg-fora button').forEach(b => b.onclick = () => { UI.foraModo = b.getAttribute('data-fm'); renderApp(); });
+  wireSort(el);
+  el.querySelectorAll('[data-pot]').forEach(b => b.onclick = e => { e.stopPropagation(); modalPotencial(b.getAttribute('data-pot')); });
+  el.querySelectorAll('[data-contato]').forEach(b => b.onclick = e => { e.stopPropagation(); modalRegistrarContato(b.getAttribute('data-contato'), 'whatsapp'); });
+  el.querySelectorAll('tr[data-cli]').forEach(tr => tr.onclick = () => nav('clientes/' + tr.getAttribute('data-cli')));
 }
 
 
