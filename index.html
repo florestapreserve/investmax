@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v23 \u00b7 21/10 10:57";</script>
+<script>window.__APPVER__ = "investmax-v24 \u00b7 21/10 11:13";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -7078,13 +7078,13 @@ Pages.config = {
     },
     renderCriar() {
       this._card(`
-        <h3 style="margin:0 0 6px">🔐 Crie sua senha de acesso</h3>
-        <p class="small muted" style="margin:0 0 12px">Um código só seu pra abrir o app neste aparelho — de 4 a 8 números.</p>
+        <h3 style="margin:0 0 6px">🔐 Crie o PIN deste aparelho</h3>
+        <p class="small muted" style="margin:0 0 12px">Um código rápido (4 a 8 números) pra destravar o app neste aparelho.${window.Nuvem ? ' <b>Não é a senha do e-mail</b> — pode ser outro número.' : ''}</p>
         <div class="fld"><label>Senha (4 a 8 números)</label><input id="pn-1" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8"></div>
         <div class="fld" style="margin-top:10px"><label>Repita a senha</label><input id="pn-2" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8"></div>
         <div id="pn-erro"></div>
         <button class="btn btn-primary" id="pn-ok" style="width:100%;margin-top:16px">Salvar e entrar</button>
-        <p class="small muted" style="margin-top:12px">⚠️ Guarde bem: sem essa senha e sem um backup, não dá pra recuperar os dados deste aparelho.</p>`);
+        <p class="small muted" style="margin-top:12px">${window.Nuvem ? 'Se esquecer o PIN, é só entrar de novo com o e-mail e a senha da conta.' : '⚠️ Guarde bem: sem essa senha e sem um backup, não dá pra recuperar os dados deste aparelho.'}</p>`);
       const erro = (m) => document.getElementById('pn-erro').innerHTML = `<div class="warn-banner" style="margin-top:12px">⚠️ ${m}</div>`;
       document.getElementById('pn-ok').onclick = async () => {
         const a = document.getElementById('pn-1').value, b = document.getElementById('pn-2').value;
@@ -7102,20 +7102,33 @@ Pages.config = {
       this._card(`
         <h3 style="margin:0 0 6px">🔒 InvestMax</h3>
         ${ocioso ? '<div class="warn-banner" style="margin-bottom:12px">Trancado por inatividade. Digite sua senha.</div>' : '<p class="small muted" style="margin:0 0 12px">Digite sua senha de acesso.</p>'}
-        <div class="fld"><label>Senha</label><input id="pn-in" type="password" inputmode="numeric" autocomplete="current-password" maxlength="8"></div>
+        <div class="fld"><label>${window.Nuvem ? 'PIN do aparelho (ou a senha da conta)' : 'Senha'}</label><input id="pn-in" type="password" ${window.Nuvem ? '' : 'inputmode="numeric" maxlength="8"'} autocomplete="current-password"></div>
         <div id="pn-erro"></div>
-        <button class="btn btn-primary" id="pn-ok" style="width:100%;margin-top:16px">Entrar</button>`);
+        <button class="btn btn-primary" id="pn-ok" style="width:100%;margin-top:16px">Entrar</button>
+        ${window.Nuvem ? '<button class="btn" id="pn-esqueci" style="width:100%;margin-top:8px">Esqueci o PIN — entrar com e-mail e senha</button>' : ''}`);
       const erro = (m) => document.getElementById('pn-erro').innerHTML = `<div class="warn-banner" style="margin-top:12px">⚠️ ${m}</div>`;
       const inp = document.getElementById('pn-in');
       const tentar = async () => {
         const st = lerPin(); if (!st) return this.renderCriar();
         const hash = await derivar(inp.value, st.salt);
         if (hash === st.hash) return this._abrir();
+        if (window.Nuvem && inp.value) { // digitou a senha da conta no lugar do PIN? confere no servidor
+          const ses = Nuvem.carregarSessao();
+          if (ses && ses.email) {
+            try { await Nuvem.login(ses.email, inp.value); return this._abrir(); } catch (e) { /* não era a senha da conta */ }
+          }
+        }
         tentativas++; inp.value = '';
-        erro(tentativas >= 3 ? 'Senha incorreta. Se esqueceu, só um backup recupera os dados.' : 'Senha incorreta.');
+        erro(window.Nuvem ? 'Não confere com o PIN nem com a senha da conta. Se esqueceu o PIN, toque em "Esqueci o PIN" abaixo.' : (tentativas >= 3 ? 'Senha incorreta. Se esqueceu, só um backup recupera os dados.' : 'Senha incorreta.'));
       };
       document.getElementById('pn-ok').onclick = tentar;
       inp.addEventListener('keydown', e => { if (e.key === 'Enter') tentar(); });
+      const esq = document.getElementById('pn-esqueci');
+      if (esq) esq.onclick = () => { // esqueceu o PIN: apaga o PIN e a sessão deste aparelho → login com e-mail e senha → cria PIN novo
+        localStorage.removeItem(LS_PIN);
+        Nuvem.guardarSessao(null);
+        location.reload();
+      };
       inp.focus();
     },
   };
