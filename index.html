@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v21 \u00b7 20/10 15:52";</script>
+<script>window.__APPVER__ = "investmax-v22 \u00b7 21/10 09:44";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -3955,7 +3955,7 @@ function modalCaixaLeads() {
 }
 
 Pages.pipeline = {
-  title: 'Pipeline',
+  title: 'Leads',
   render(el, params) {
     const q = foldTxt(UI.buscaPipe || '');
     const fc = UI.pipeClasse; // filtro do painel de origens
@@ -4047,7 +4047,7 @@ Pages.pipeline = {
       </div>`;
     }).join('');
 
-    el.innerHTML = pageHead('🎯 Pipeline de prospecção',
+    el.innerHTML = pageHead('🎯 Leads — funil de prospecção',
       `${emAndamento.length} leads em andamento · ${fmtCompact(potTotal)} de potencial · ${ativos.filter(l => l.etapa === 'convertido').length} convertidos${caixa.length ? ` · <b style="color:var(--warn-text)">📥 ${caixa.length} fora do funil aguardando classificação</b>` : ''}`,
       `<input id="busca-pipe" style="width:200px" placeholder="Filtrar…" value="${esc(UI.buscaPipe || '')}">
        <button class="btn ${UI.mostrarFinalizados ? 'btn-primary' : ''}" id="tog-fim">${UI.mostrarFinalizados ? '✓ ' : ''}Recusados</button>
@@ -7123,281 +7123,323 @@ Pages.config = {
 })();
 
 
-/* ===== sync.js ===== */
-/* ============ módulo: sincronização entre aparelhos (cifrada ponta a ponta) ============ */
-/* Só no build PWA. Os dados são cifrados NO APARELHO (AES-GCM 256) com uma chave derivada do
-   "código de sincronização"; o servidor recebe e guarda apenas texto cifrado. O endereço do cofre
-   também sai do código — sem o código ninguém acha nem lê nada (nem o servidor, nem quem programou).
-   Regras: nunca perder dado (conflito guarda ponto de restauração), envio automático com nova tentativa. */
+/* ===== nuvem.js ===== */
+/* ============ módulo: nuvem (login + sincronização Supabase) ============ */
+/* Presente SÓ no build online. O build local (arquivo da Desktop) não inclui este arquivo.
+   Filosofia: localStorage continua sendo o cache de trabalho (o app funciona offline);
+   toda alteração agenda um envio pra nuvem e o indicador só diz "salvo" quando a nuvem confirmar
+   (regra do usuário: nunca parecer salvo sem estar na nuvem; retry automático). */
 'use strict';
 
-const SYNC_URL = 'https://vuavvleoqunporytyguj.supabase.co';
-const SYNC_KEY = 'sb_publishable_Di17a51xxZ1ZD88TRiLkbA_TJzJNZFy'; // chave pública do servidor (por natureza) — quem protege é a cifra + o código
-const LS_SYNC = 'investmax_sync';          // { id, k, cod } — só existe com a sincronização ligada neste aparelho
-const LS_SYNC_REV = 'investmax_sync_rev';  // última versão do cofre que este aparelho tem
-const LS_SYNC_PEND = 'investmax_sync_pend'; // '1' = há alteração local ainda não enviada
-const SYNC_ALFABETO = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // sem 0/O, 1/I/L (evita confusão ao digitar)
+const NUVEM_URL = 'https://vuavvleoqunporytyguj.supabase.co';
+const NUVEM_ANON = 'sb_publishable_Di17a51xxZ1ZD88TRiLkbA_TJzJNZFy'; // chave pública por natureza — a segurança vem do RLS (cada usuário só lê o próprio estado)
+const LS_SESSAO = 'investmax_sessao';
+const LS_NUVEM_REV = 'investmax_nuvem_rev';        // último rev confirmado na nuvem por este navegador
+const LS_NUVEM_PENDENTE = 'investmax_nuvem_pend';  // '1' = tem alteração local ainda não confirmada na nuvem
 
-const Sync = {
-  cfg: null, chave: null,
-  timer: null, retry: null, intervalo: null,
-  enviando: false, geracao: 0, _aplicando: false, _aplicarDepois: null,
-  status: 'ok', ultimo: null,
+const Nuvem = {
+  sessao: null,
+  timer: null,        // debounce do envio
+  retry: null,        // repetição quando está sem conexão
+  enviando: false,
 
-  /* ---------- utilidades ---------- */
-  _b64(buf) { const b = new Uint8Array(buf); let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); },
-  _deB64(s) { const bin = atob(s); const b = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i); return b; },
-  normalizarCodigo(c) { return String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); },
-  formatarCodigo(c) { return this.normalizarCodigo(c).match(/.{1,5}/g).join('-'); },
-  gerarCodigo() {
-    const r = crypto.getRandomValues(new Uint32Array(20));
-    return Array.from(r, n => SYNC_ALFABETO[n % SYNC_ALFABETO.length]).join(''); // ~99 bits
+  /* ---------- sessão ---------- */
+  carregarSessao() {
+    try { this.sessao = JSON.parse(localStorage.getItem(LS_SESSAO) || 'null'); } catch (e) { this.sessao = null; }
+    return this.sessao;
   },
-  async derivar(codigo) { // código → chave AES (256) + id do cofre (sha-256 da outra metade)
-    const enc = new TextEncoder();
-    const base = await crypto.subtle.importKey('raw', enc.encode(this.normalizarCodigo(codigo)), 'PBKDF2', false, ['deriveBits']);
-    const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: enc.encode('investmax-sync-v1'), iterations: 200000, hash: 'SHA-256' }, base, 512));
-    const idHash = new Uint8Array(await crypto.subtle.digest('SHA-256', bits.slice(32)));
-    return { k: this._b64(bits.slice(0, 32)), id: Array.from(idHash, b => b.toString(16).padStart(2, '0')).join('') };
+  guardarSessao(s) {
+    this.sessao = s;
+    if (s) localStorage.setItem(LS_SESSAO, JSON.stringify(s));
+    else localStorage.removeItem(LS_SESSAO);
   },
-  async _chaveAes() {
-    if (!this.chave) this.chave = await crypto.subtle.importKey('raw', this._deB64(this.cfg.k), 'AES-GCM', false, ['encrypt', 'decrypt']);
-    return this.chave;
+  _uidDoToken(tok) {
+    try { return JSON.parse(atob(tok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).sub; } catch (e) { return null; }
   },
-  async cifrar(texto) {
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await this._chaveAes(), new TextEncoder().encode(texto));
-    return JSON.stringify({ v: 1, iv: this._b64(iv), ct: this._b64(ct) });
+  async _auth(caminho, body) {
+    const r = await fetch(NUVEM_URL + '/auth/v1/' + caminho, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: NUVEM_ANON },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const msg = j.error_description || j.msg || j.message || ('erro ' + r.status);
+      throw new Error(/invalid login credentials/i.test(msg) ? 'E-mail ou senha incorretos.' : msg);
+    }
+    return j;
   },
-  async decifrar(blob) {
-    const o = JSON.parse(blob);
-    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: this._deB64(o.iv) }, await this._chaveAes(), this._deB64(o.ct));
-    return new TextDecoder().decode(pt);
+  async login(email, senha) {
+    const j = await this._auth('token?grant_type=password', { email, password: senha });
+    this.guardarSessao({
+      access_token: j.access_token, refresh_token: j.refresh_token,
+      expires_at: Math.floor(Date.now() / 1000) + (j.expires_in || 3600),
+      uid: (j.user && j.user.id) || this._uidDoToken(j.access_token), email,
+    });
   },
-  async rpc(nome, corpo) {
-    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const t = ctl ? setTimeout(() => ctl.abort(), 20000) : null;
-    try {
-      const r = await fetch(SYNC_URL + '/rest/v1/rpc/' + nome, {
-        method: 'POST', signal: ctl ? ctl.signal : undefined,
-        headers: { apikey: SYNC_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify(corpo),
-      });
-      if (!r.ok) throw new Error('servidor respondeu ' + r.status);
-      return await r.json();
-    } finally { if (t) clearTimeout(t); }
+  async recuperarSenha(email) { await this._auth('recover', { email }); },
+  sair() {
+    this.guardarSessao(null);
+    location.reload(); // cache local fica (é o mesmo aparelho); sem sessão, volta pra tela de login
+  },
+  async tokenValido() { // renova sozinho quando está perto de vencer
+    const s = this.sessao;
+    if (!s) throw new Error('sem sessão');
+    if (s.expires_at - 60 > Math.floor(Date.now() / 1000)) return s.access_token;
+    const j = await this._auth('token?grant_type=refresh_token', { refresh_token: s.refresh_token });
+    this.guardarSessao({
+      ...s, access_token: j.access_token,
+      refresh_token: j.refresh_token || s.refresh_token,
+      expires_at: Math.floor(Date.now() / 1000) + (j.expires_in || 3600),
+    });
+    return this.sessao.access_token;
   },
 
-  /* ---------- estado local ---------- */
-  ativo() { return !!this.cfg; },
-  carregar() { try { this.cfg = JSON.parse(localStorage.getItem(LS_SYNC) || 'null'); } catch (e) { this.cfg = null; } this.chave = null; return this.cfg; },
-  rev() { return +localStorage.getItem(LS_SYNC_REV) || 0; },
-  setRev(n) { localStorage.setItem(LS_SYNC_REV, String(n)); },
-  pendente() { return localStorage.getItem(LS_SYNC_PEND) === '1'; },
-  setPendente(b) { if (b) localStorage.setItem(LS_SYNC_PEND, '1'); else localStorage.removeItem(LS_SYNC_PEND); },
-
-  /* ---------- indicador no rodapé do menu ---------- */
-  indicadorAtual() {
-    if (!this.ativo()) return '<span class="save-dot">●</span> Dados salvos neste aparelho';
-    if (this.status === 'enviando') return '<span class="save-dot" style="color:var(--warn)">●</span> Sincronizando…';
-    if (this.status === 'offline') return '<span class="save-dot" style="color:var(--warn)">●</span> Sem internet — sincroniza sozinho quando voltar';
-    if (this.status === 'erro') return '<span class="save-dot" style="color:var(--crit)">●</span> Sincronização com problema — veja Configurações';
-    return '<span class="save-dot">●</span> ☁️ Sincronizado' + (this.ultimo ? ' ' + this.ultimo.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '');
+  /* ---------- dados (PostgREST com trava otimista por rev) ---------- */
+  async _rest(metodo, caminho, body, headers) {
+    const tok = await this.tokenValido();
+    const r = await fetch(NUVEM_URL + '/rest/v1/' + caminho, {
+      method: metodo,
+      headers: { 'Content-Type': 'application/json', apikey: NUVEM_ANON, Authorization: 'Bearer ' + tok, ...(headers || {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (r.status === 401) { this.guardarSessao(null); location.reload(); throw new Error('sessão expirou'); }
+    return r;
   },
-  _status(s) { this.status = s; if (s === 'ok') this.ultimo = new Date(); const el = document.getElementById('save-ind'); if (el) el.innerHTML = this.indicadorAtual(); },
+  async baixar() { // → {blob, rev} ou null (nunca gravou)
+    const r = await this._rest('GET', 'estado?select=blob,rev');
+    if (!r.ok) throw new Error('erro ' + r.status);
+    const rows = await r.json();
+    return rows[0] || null;
+  },
+  async subir(estado, revAtual) { // → {rev} ou {conflito:true} quando outro aparelho gravou antes
+    const uid = this.sessao.uid;
+    if (!revAtual) {
+      const r = await this._rest('POST', 'estado', { user_id: uid, blob: estado, rev: 1, atualizado_em: new Date().toISOString() }, { Prefer: 'return=minimal' });
+      if (r.status === 409) return { conflito: true };
+      if (!r.ok) throw new Error('erro ' + r.status);
+      return { rev: 1 };
+    }
+    const r = await this._rest('PATCH', 'estado?user_id=eq.' + uid + '&rev=eq.' + revAtual,
+      { blob: estado, rev: revAtual + 1, atualizado_em: new Date().toISOString() }, { Prefer: 'return=representation' });
+    if (!r.ok) throw new Error('erro ' + r.status);
+    const rows = await r.json();
+    if (!rows.length) return { conflito: true };
+    return { rev: revAtual + 1 };
+  },
 
-  /* ---------- envio ---------- */
-  agendar() { // chamado a cada gravação local
-    if (!this.ativo() || this._aplicando) return;
-    this.geracao++;
-    this.setPendente(true);
-    this._status('enviando');
+  /* ---------- orquestração do sync ---------- */
+  revConhecido() { return +localStorage.getItem(LS_NUVEM_REV) || 0; },
+  indicador(html) { const el = document.getElementById('save-ind'); if (el) el.innerHTML = html; },
+  indicadorAtual() { // usado pelo renderApp (o re-render reescreve a lateral — o estado real mora aqui)
+    return localStorage.getItem(LS_NUVEM_PENDENTE) === '1' ? '☁️ <b>Salvando…</b>' : '☁️ Conectado à nuvem';
+  },
+  aposPersist() { // chamado depois de todo save local: agenda o envio e mostra "Salvando…"
+    localStorage.setItem(LS_NUVEM_PENDENTE, '1');
+    this.indicador('☁️ <b>Salvando…</b>');
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.enviar(), 1200);
   },
   async enviar() {
-    if (!this.ativo()) return;
-    if (this.enviando) { clearTimeout(this.timer); this.timer = setTimeout(() => this.enviar(), 800); return; }
-    this.enviando = true; clearTimeout(this.retry);
-    const gen = this.geracao;
+    if (this.enviando || !this.sessao) return;
+    this.enviando = true;
+    clearTimeout(this.retry);
     try {
-      const blob = await this.cifrar(JSON.stringify(Store.state));
-      const res = +(await this.rpc('cofre_gravar', { p_id: this.cfg.id, p_blob: blob, p_rev_base: this.rev() }));
-      if (res > 0) {
-        this.setRev(res);
-        if (gen === this.geracao) { this.setPendente(false); this._status('ok'); }
-        else { this.enviando = false; return this.enviar(); } // mexeu durante o envio: manda de novo
-      } else if (res < 0) {
-        this.enviando = false; return this.puxar(); // o outro aparelho gravou antes: resolve pelo puxar
-      } else {
-        this._status('erro'); // cofre não existe mais no servidor
-      }
-    } catch (e) {
-      this._status(navigator.onLine === false ? 'offline' : 'offline');
-      this.retry = setTimeout(() => this.enviar(), 8000);
+      const res = await this.subir(S, this.revConhecido() || null);
+      if (res.conflito) { this.enviando = false; this.aoConflito(); return; }
+      localStorage.setItem(LS_NUVEM_REV, String(res.rev));
+      localStorage.removeItem(LS_NUVEM_PENDENTE);
+      this.indicador('☁️ Salvo na nuvem ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
+    } catch (e) { // sem conexão (ou erro passageiro): guarda pendência e insiste sozinho
+      this.indicador('⚠️ <b>Sem conexão</b> — guardado neste aparelho; sincronizo assim que voltar');
+      this.retry = setTimeout(() => this.enviar(), 5000);
     }
     this.enviando = false;
   },
-
-  /* ---------- recebimento ---------- */
-  async puxar() {
-    if (!this.ativo() || this.enviando) return;
+  async aoConflito() { // outro aparelho gravou por cima: nuvem vence, com cópia de segurança do local
     try {
-      const remoto = +(await this.rpc('cofre_rev', { p_id: this.cfg.id }));
-      const local = this.rev();
-      if (remoto === 0) { this._status('erro'); return; }
-      if (remoto > local) {
-        const linhas = await this.rpc('cofre_ler', { p_id: this.cfg.id });
-        if (!linhas || !linhas[0]) return;
-        const txt = await this.decifrar(linhas[0].blob);
-        this.aplicar(txt, +linhas[0].rev);
-      } else if (remoto < local) { // cofre "voltou no tempo" (raro): este aparelho tem o mais novo → regrava
-        this.setRev(remoto); this.setPendente(true); this.enviar();
-      } else if (this.pendente()) this.enviar();
-      else this._status('ok');
-    } catch (e) {
-      this._status('offline');
-    }
-  },
-  aplicar(txt, novoRev) {
-    if (typeof _modais !== 'undefined' && _modais.length) { // não troca os dados com uma janela aberta: espera fechar
-      this._aplicarDepois = [txt, novoRev];
-      clearTimeout(this._esperaModal);
-      this._esperaModal = setTimeout(() => { const p = this._aplicarDepois; this._aplicarDepois = null; if (p) this.aplicar(p[0], p[1]); }, 2500);
-      return;
-    }
-    const conflito = this.pendente();
-    if (conflito) Store.takeSnapshot('Antes de receber do outro aparelho (alterações deste aparelho que não subiram)');
-    const novo = Store.migrate(JSON.parse(txt));
-    this._aplicando = true;
-    try {
-      Store.state = novo; S = novo;
-      Store.persist(true);
-    } finally { this._aplicando = false; }
-    this.setRev(novoRev); this.setPendente(false); this.geracao++;
-    this._status('ok');
-    renderApp();
-    if (conflito) toast('⚠️ O outro aparelho tinha alterações mais novas e elas foram trazidas para cá. O que você mexeu aqui sem internet ficou guardado em Configurações → Backup → pontos de restauração.', 'warn');
+      const nuvem = await this.baixar();
+      if (!nuvem) return;
+      Store.takeSnapshot('antes de puxar da nuvem (conflito entre aparelhos)');
+      confirmar('☁️ Outro aparelho salvou primeiro',
+        'Os dados da nuvem estão mais novos que os deste aparelho (alguém salvou em outro lugar). ' +
+        'Vou <b>carregar a versão da nuvem</b> — uma cópia do que estava aqui ficou guardada nos pontos de restauração (Configurações).',
+        () => {
+          S = Store.state = Store.migrate(nuvem.blob);
+          localStorage.setItem(LS_NUVEM_REV, String(nuvem.rev));
+          localStorage.removeItem(LS_NUVEM_PENDENTE);
+          this._mudo = true; Store.persist(true); this._mudo = false;
+          renderApp();
+          this.indicador('☁️ Sincronizado com a nuvem');
+        }, { okLabel: 'Carregar da nuvem' });
+    } catch (e) { this.retry = setTimeout(() => this.enviar(), 5000); }
   },
 
-  /* ---------- ciclo de vida ---------- */
-  iniciar() {
-    this.carregar();
-    if (!this.ativo()) return;
-    this._status(this.pendente() ? 'enviando' : 'ok');
-    this.puxar();
-    clearInterval(this.intervalo);
-    this.intervalo = setInterval(() => { if (!document.hidden) this.puxar(); }, 30000);
-    if (!this._ouvindo) {
-      this._ouvindo = true;
-      document.addEventListener('visibilitychange', () => { if (!document.hidden) this.puxar(); });
-      window.addEventListener('online', () => this.puxar());
-    }
+  /* ---------- convite / recuperação de senha (link do e-mail chega com um código no endereço) ---------- */
+  hashAuth() {
+    const h = location.hash.replace(/^#\/?/, '');
+    if (!/access_token=/.test(h)) return null;
+    const p = new URLSearchParams(h);
+    return { access: p.get('access_token'), refresh: p.get('refresh_token'), type: p.get('type') };
   },
-  async ativarNovo() { // 1º aparelho: cria o cofre com os dados daqui
-    const cod = this.gerarCodigo();
-    const d = await this.derivar(cod);
-    this.cfg = { id: d.id, k: d.k, cod }; this.chave = null;
-    const blob = await this.cifrar(JSON.stringify(Store.state));
-    const res = +(await this.rpc('cofre_gravar', { p_id: d.id, p_blob: blob, p_rev_base: 0 }));
-    if (res !== 1) { this.cfg = null; throw new Error('não consegui criar o cofre'); }
-    localStorage.setItem(LS_SYNC, JSON.stringify(this.cfg));
-    this.setRev(1); this.setPendente(false);
-    this.iniciar();
-    return cod;
-  },
-  async conferirCodigo(cod) { // outro aparelho: o código existe? (devolve o rev ou 0)
-    const d = await this.derivar(cod);
-    const rev = +(await this.rpc('cofre_rev', { p_id: d.id }));
-    return { d, rev };
-  },
-  async entrar(cod, d) {
-    this.cfg = { id: d.id, k: d.k, cod: this.normalizarCodigo(cod) }; this.chave = null;
-    const linhas = await this.rpc('cofre_ler', { p_id: d.id });
-    if (!linhas || !linhas[0]) { this.cfg = null; throw new Error('cofre vazio'); }
-    let txt;
-    try { txt = await this.decifrar(linhas[0].blob); } catch (e) { this.cfg = null; throw new Error('código não abre este cofre'); }
-    Store.takeSnapshot('Antes de entrar na sincronização (dados que estavam neste aparelho)');
-    localStorage.setItem(LS_SYNC, JSON.stringify(this.cfg));
-    this.setPendente(false);
-    this.aplicar(txt, +linhas[0].rev);
-    this.iniciar();
-  },
-  desligar() {
-    localStorage.removeItem(LS_SYNC); localStorage.removeItem(LS_SYNC_REV); localStorage.removeItem(LS_SYNC_PEND);
-    clearInterval(this.intervalo); clearTimeout(this.timer); clearTimeout(this.retry);
-    this.cfg = null; this.chave = null; this._status('ok');
-  },
-
-  /* ---------- cartão em Configurações → Dados ---------- */
-  cardHTML() {
-    if (!this.ativo()) return `<div class="card"><div class="card-title">☁️ Sincronizar celular e iPad</div>
-      <p class="small muted mb">Liga a sincronização automática entre os seus aparelhos. Os dados são <b>trancados aqui dentro</b> com um código secreto antes de sair — o servidor guarda só um bloco ilegível.</p>
-      <div class="row wrap">
-        <button class="btn btn-primary" id="sync-ativar">☁️ Ativar neste aparelho</button>
-        <button class="btn" id="sync-entrar">🔑 Já tenho um código</button>
-      </div>
-      <p class="small muted mt"><b>Ative no aparelho que tem os dados certos</b> (o principal). Nos outros, use "Já tenho um código".</p></div>`;
-    return `<div class="card"><div class="card-title">☁️ Sincronizar celular e iPad <span class="chip chip-a">ligada</span></div>
-      <p class="small muted mb">Tudo que você muda aqui vai para os outros aparelhos em segundos (cifrado). Situação: <span id="sync-sit">${this.indicadorAtual()}</span></p>
-      <div class="row wrap">
-        <button class="btn btn-primary" id="sync-agora">🔄 Sincronizar agora</button>
-        <button class="btn" id="sync-codigo">🔑 Ver o código</button>
-        <button class="btn" id="sync-desligar">Desligar neste aparelho</button>
+  renderDefinirSenha(tk) {
+    const titulo = tk.type === 'invite' ? '👋 Bem-vindo! Crie sua senha' : '🔑 Defina a nova senha';
+    document.getElementById('app').innerHTML = `
+      <div class="login-wrap"><div class="login-card">
+        <div class="side-logo" style="margin-bottom:18px"><div class="mark">📈</div><div><b>InvestMax</b><span>CRM do assessor</span></div></div>
+        <h3 style="margin:0 0 12px">${titulo}</h3>
+        <div class="fld"><label>Nova senha</label><input id="ns-1" type="password" autocomplete="new-password" placeholder="mínimo 8 caracteres"></div>
+        <div class="fld" style="margin-top:10px"><label>Repita a senha</label><input id="ns-2" type="password" autocomplete="new-password"></div>
+        <div id="ns-erro"></div>
+        <button class="btn btn-primary" id="ns-ok" style="width:100%;margin-top:16px">Salvar senha e entrar</button>
       </div></div>`;
+    document.getElementById('ns-ok').onclick = async () => {
+      const s1 = document.getElementById('ns-1').value, s2 = document.getElementById('ns-2').value;
+      const erro = (m) => { document.getElementById('ns-erro').innerHTML = `<div class="warn-banner" style="margin-top:12px">⚠️ ${m}</div>`; };
+      if (s1.length < 8) { erro('A senha precisa ter pelo menos 8 caracteres.'); return; }
+      if (s1 !== s2) { erro('As duas senhas não são iguais.'); return; }
+      try {
+        const r = await fetch(NUVEM_URL + '/auth/v1/user', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', apikey: NUVEM_ANON, Authorization: 'Bearer ' + tk.access },
+          body: JSON.stringify({ password: s1 }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.msg || j.message || 'não consegui salvar a senha — o link pode ter vencido; peça um novo');
+        this.guardarSessao({
+          access_token: tk.access, refresh_token: tk.refresh,
+          expires_at: Math.floor(Date.now() / 1000) + 3600,
+          uid: this._uidDoToken(tk.access), email: (j.email || ''),
+        });
+        history.replaceState(null, '', location.pathname); // limpa o código do endereço
+        location.reload();
+      } catch (e) { erro(esc(e.message)); }
+    };
+    document.getElementById('ns-1').focus();
   },
-  _mostrarCodigo(cod, novo) {
-    openModal({
-      title: novo ? '✅ Sincronização ligada — anote o código' : '🔑 Código de sincronização',
-      body: `<p class="dim">${novo ? 'Este é o código secreto dos seus dados. ' : ''}Para ligar outro aparelho: abra o InvestMax nele → <b>Configurações → Dados → ☁️ Sincronizar → Já tenho um código</b> e digite:</p>
-        <div style="font:700 22px/1.3 ui-monospace,Menlo,monospace;letter-spacing:1px;text-align:center;padding:16px;margin:14px 0;background:var(--surface2);border-radius:12px;user-select:all">${esc(this.formatarCodigo(cod))}</div>
-        <p class="small muted">Guarde num lugar seguro (ex.: nas Notas com senha). <b>Quem tiver este código consegue abrir os dados</b> — não mande pra ninguém. Se perder, dá pra ver de novo aqui em qualquer aparelho ligado.</p>`,
-      footer: `<span class="spacer"></span><button class="btn" data-act="copiar">📋 Copiar</button><button class="btn btn-primary" onclick="closeModal()">Pronto</button>`,
-      onOpen(el) {
-        el.querySelector('[data-act="copiar"]').onclick = async () => {
-          try { await navigator.clipboard.writeText(Sync.formatarCodigo(cod)); toast('📋 Código copiado.'); } catch (e) { toast('Não consegui copiar — selecione o código e copie.', 'err'); }
-        };
-      },
-    });
+
+  /* ---------- boot do modo online ---------- */
+  async boot() {
+    const tk = this.hashAuth();
+    if (tk && (tk.type === 'invite' || tk.type === 'recovery' || tk.type === 'signup')) { this.renderDefinirSenha(tk); return; }
+    if (!this.carregarSessao()) { this.renderLogin(); return; }
+    this._mudo = true; S = Store.load(); this._mudo = false; // cache local: instantâneo
+    if (this.revConhecido() > 0 && this.temDados()) {
+      // aparelho JÁ sincronizado antes: mostra o cache na hora (fim do "abre e trava") e reconcilia em 2º plano
+      this._mudo = true; iniciarApp(); this._mudo = false; // a meta automática do mês não deve marcar "Salvando…"
+      this.armarOcioso();
+      this.reconciliarNuvem(true);
+      this.vigiar();
+    } else {
+      // 1º login / sem cache confiável: espera a nuvem antes de abrir (seguro — não há dado local a mostrar, sem janela de edição)
+      await this.reconciliarNuvem(false);
+      iniciarApp();
+      this.armarOcioso();
+      this.vigiar();
+    }
   },
-  wireCard(el) {
-    const q = s => el.querySelector(s);
-    if (q('#sync-ativar')) q('#sync-ativar').onclick = () => confirmar('☁️ Ativar a sincronização',
-      'Os dados <b>deste aparelho</b> viram a base da sincronização. Depois é só digitar o código nos outros aparelhos (eles recebem estes dados).',
-      async () => {
-        toast('☁️ Ligando…');
-        try { const cod = await this.ativarNovo(); renderApp(); this._mostrarCodigo(cod, true); }
-        catch (e) { toast('Não consegui ligar agora (' + esc(e.message) + '). Confira a internet e tente de novo.', 'err'); }
-      }, { okLabel: 'Ativar' });
-    if (q('#sync-entrar')) q('#sync-entrar').onclick = () => openModal({
-      title: '🔑 Entrar com o código',
-      body: `<div class="fld"><label>Código de sincronização (do outro aparelho)</label>
-          <input id="sync-cod" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXXX-XXXXX-XXXXX-XXXXX" style="font-family:ui-monospace,Menlo,monospace;letter-spacing:1px"></div>
-        <p class="small muted">Os dados que estão <b>neste</b> aparelho serão trocados pelos do outro. Antes disso é feito um ponto de restauração automático.</p>`,
-      footer: `<span class="spacer"></span><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" data-act="ok">Entrar</button>`,
-      onOpen(m) {
-        m.querySelector('[data-act="ok"]').onclick = async () => {
-          const cod = m.querySelector('#sync-cod').value;
-          if (Sync.normalizarCodigo(cod).length !== 20) { toast('O código tem 20 letras/números (ex.: ABCDE-FGH23-…).', 'err'); return; }
-          const btn = m.querySelector('[data-act="ok"]'); btn.disabled = true; btn.textContent = 'Conferindo…';
-          try {
-            const { d, rev } = await Sync.conferirCodigo(cod);
-            if (!rev) { btn.disabled = false; btn.textContent = 'Entrar'; toast('Código não encontrado. Confira as letras com o outro aparelho.', 'err'); return; }
-            closeModal();
-            await Sync.entrar(cod, d);
-            toast('✅ Pronto! Este aparelho agora está sincronizado com o outro.');
-          } catch (e) { btn.disabled = false; btn.textContent = 'Entrar'; toast('Não consegui entrar (' + esc(e.message) + '). Confira a internet e o código.', 'err'); }
-        };
-      },
-    });
-    if (q('#sync-agora')) q('#sync-agora').onclick = async () => { this._status('enviando'); if (this.pendente()) await this.enviar(); else await this.puxar(); const s = q('#sync-sit'); if (s) s.innerHTML = this.indicadorAtual(); toast(this.status === 'ok' ? '✅ Sincronizado.' : '⚠️ Sem conexão agora — tento de novo sozinho.'); };
-    if (q('#sync-codigo')) q('#sync-codigo').onclick = () => this._mostrarCodigo(this.cfg.cod, false);
-    if (q('#sync-desligar')) q('#sync-desligar').onclick = () => confirmar('Desligar a sincronização neste aparelho',
-      'Os dados continuam aqui, mas param de ir e vir dos outros aparelhos. Dá pra religar depois com o código.',
-      () => { this.desligar(); renderApp(); toast('Sincronização desligada neste aparelho.'); }, { okLabel: 'Desligar' });
+  async reconciliarNuvem(jaVisivel) { // puxa da nuvem; conservador pra NUNCA perder dado nem regredir
+    if (jaVisivel) this.indicador('☁️ <b>Sincronizando…</b>');
+    const revAntes = this.revConhecido();
+    try {
+      const nuvem = await this.baixar();
+      const conhecido = this.revConhecido();
+      const pendente = localStorage.getItem(LS_NUVEM_PENDENTE) === '1';
+      const houveEnvioLocal = conhecido !== revAntes; // um envio nosso avançou o rev durante a espera → o blob baixado está velho
+      if (nuvem && nuvem.rev > conhecido && !houveEnvioLocal) {
+        // a nuvem tem algo GENUINAMENTE mais novo (outro aparelho / restauração) — só aceita se rev maior (nunca regride)
+        if (pendente) { this.aoConflito(); return; } // edição local não enviada + nuvem nova = conflito real → diálogo (nunca descarta calado)
+        if (!conhecido && this.temDados()) Store.takeSnapshot('Antes de entrar na conta (dados que estavam só neste aparelho)'); // 1º login num aparelho que já tinha dados
+        S = Store.state = Store.migrate(nuvem.blob);
+        clearTimeout(this.timer);
+        localStorage.setItem(LS_NUVEM_REV, String(nuvem.rev));
+        localStorage.removeItem(LS_NUVEM_PENDENTE);
+        this._mudo = true; Store.persist(true); this._mudo = false;
+        if (jaVisivel) renderApp(); // a nuvem trouxe algo diferente → atualiza a tela (no 1º login o iniciarApp renderiza depois)
+      } else if (pendente) {
+        this.enviar(); // edição na janela / ficou coisa pra enviar (fechou no meio): envia agora
+      } else if (!nuvem && this.temDados()) {
+        this.aposPersist(); // primeira subida (ex.: acabou de importar o backup da migração)
+      }
+      if (localStorage.getItem(LS_NUVEM_PENDENTE) !== '1') this.indicador('☁️ Conectado à nuvem');
+    } catch (e) {
+      console.warn('nuvem indisponível no boot', e);
+      this.indicador('⚠️ <b>Sem conexão</b> — trabalhando com os dados deste aparelho');
+    }
+  },
+  vigiar() { // traz o que o outro aparelho salvou: ao voltar pro app e a cada minuto (nunca com janela aberta)
+    if (this._vigiando || !this.sessao) return;
+    this._vigiando = true;
+    const puxar = () => {
+      if (document.hidden || this.enviando || (typeof _modais !== 'undefined' && _modais.length)) return;
+      if (localStorage.getItem(LS_NUVEM_PENDENTE) === '1') { this.enviar(); return; }
+      this.reconciliarNuvem(true);
+    };
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) puxar(); });
+    window.addEventListener('online', puxar);
+    setInterval(puxar, 60000);
+  },
+  temDados() { return !!(S && (S.clientes.length || S.leads.length || S.reunioes.length || S.captacoes.length || S.contatos.length)); },
+
+  /* ---------- trava por inatividade (dados financeiros não ficam abertos sozinhos) ---------- */
+  IDLE_MS: 20 * 60 * 1000, // 20 min sem uso → encerra a sessão (o cache local fica; nada se perde)
+  armarOcioso() {
+    if (!this.sessao || this._ocioLigado || window.Trava) return; // no app com PIN, a trava rápida é o PIN (sessão fica)
+    this._ocioLigado = true;
+    const reset = () => { clearTimeout(this._ocioTimer); this._ocioTimer = setTimeout(() => this._travarPorOcio(), this.IDLE_MS); };
+    ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'].forEach(ev => document.addEventListener(ev, reset, { passive: true }));
+    reset();
+  },
+  _travarPorOcio() {
+    if (!this.sessao) return;
+    try { localStorage.setItem('investmax_ocioso', '1'); } catch (e) {}
+    this.guardarSessao(null);
+    location.reload(); // volta pra tela de login
+  },
+
+  /* ---------- tela de login ---------- */
+  renderLogin(msg) {
+    if (!msg) { try { if (localStorage.getItem('investmax_ocioso') === '1') { msg = '🔒 Sessão encerrada por inatividade (20 min). Entre novamente.'; localStorage.removeItem('investmax_ocioso'); } } catch (e) {} }
+    document.getElementById('app').innerHTML = `
+      <div class="login-wrap"><div class="login-card">
+        <div class="side-logo" style="margin-bottom:18px"><div class="mark">📈</div><div><b>InvestMax</b><span>CRM do assessor</span></div></div>
+        ${msg ? `<div class="warn-banner" style="margin-bottom:14px">${msg}</div>` : ''}
+        <div class="fld"><label>E-mail</label><input id="lg-email" type="email" autocomplete="username" placeholder="voce@exemplo.com"></div>
+        <div class="fld" style="margin-top:10px"><label>Senha</label><input id="lg-senha" type="password" autocomplete="current-password"></div>
+        <button class="btn btn-primary" id="lg-entrar" style="width:100%;margin-top:16px">Entrar</button>
+        <button class="btn" id="lg-esqueci" style="width:100%;margin-top:8px">Esqueci a senha</button>
+        <p class="small muted" style="margin-top:14px">Seus dados ficam no servidor, protegidos pelo seu login — iguais no celular, no iPad e no computador.</p>
+      </div></div>`;
+    const email = document.getElementById('lg-email'), senha = document.getElementById('lg-senha');
+    const entrar = async () => {
+      const b = document.getElementById('lg-entrar');
+      if (!email.value.trim() || !senha.value) { this.renderLogin('Preencha e-mail e senha.'); return; }
+      b.disabled = true; b.textContent = 'Entrando…';
+      try { await this.login(email.value.trim(), senha.value); location.reload(); }
+      catch (e) { this.renderLogin('⚠️ ' + esc(e.message)); }
+    };
+    document.getElementById('lg-entrar').onclick = entrar;
+    senha.addEventListener('keydown', e => { if (e.key === 'Enter') entrar(); });
+    document.getElementById('lg-esqueci').onclick = async () => {
+      if (!email.value.trim()) { this.renderLogin('Digite seu e-mail primeiro e clique de novo em "Esqueci a senha".'); return; }
+      try { await this.recuperarSenha(email.value.trim()); this.renderLogin('📧 Enviei um link de redefinição para <b>' + esc(email.value.trim()) + '</b>. Confira a caixa de entrada (e o spam).'); }
+      catch (e) { this.renderLogin('⚠️ ' + esc(e.message)); }
+    };
+    email.focus();
   },
 };
-window.Sync = Sync;
+
+window.Nuvem = Nuvem; // o boot do app testa window.Nuvem pra saber que está no modo online
+
+/* todo save local agenda o envio pra nuvem (sem tocar no core: embrulha o persist) */
+(() => {
+  const persistOriginal = Store.persist.bind(Store);
+  Store.persist = function (silencioso) {
+    const ok = persistOriginal(silencioso);
+    if (ok && Nuvem.sessao && !Nuvem._mudo) Nuvem.aposPersist();
+    return ok;
+  };
+})();
 
 
 /* ===== app.js ===== */
@@ -7410,7 +7452,7 @@ const NAV = [
   { rota: 'pipe', nome: 'Pipe', ico: '🔮' },
   { rota: 'regua', nome: 'Régua', ico: '📏' },
   { rota: 'clientes', nome: 'Clientes', ico: '👥' },
-  { rota: 'pipeline', nome: 'Pipeline', ico: '🎯' },
+  { rota: 'pipeline', nome: 'Leads', ico: '🎯' },
   { rota: 'reunioes', nome: 'Reuniões', ico: '📅' },
   { rota: 'eventos', nome: 'Eventos', ico: '🎪' },
   { rota: 'pendencias', nome: 'Pendências', ico: '📌' },
@@ -7549,6 +7591,7 @@ function iniciarApp() {
   if (window.Sync) Sync.iniciar(); // celular ⇄ iPad (cifrado ponta a ponta)
 }
 document.addEventListener('DOMContentLoaded', () => {
+  if (window.Nuvem && window.Trava && !Nuvem.hashAuth()) { Trava.boot(() => Nuvem.boot()); return; } // (link de convite/troca de senha vai direto pra criar a senha) // celular/iPad: PIN do aparelho → login/servidor
   if (window.Nuvem) { Nuvem.boot(); return; } // build online: login e nuvem primeiro (o boot chama iniciarApp)
   if (window.Trava) { Trava.boot(() => { S = Store.load(); iniciarApp(); }); return; } // build PWA (celular): senha de acesso antes de abrir
   S = Store.load();
