@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v27 \u00b7 26/10 11:53";</script>
+<script>window.__APPVER__ = "investmax-v28 \u00b7 28/10 10:31";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -3502,6 +3502,7 @@ function renderCliente360(el, id) {
       <div class="page-actions row">
         <button class="btn btn-primary" id="reg-contato">💬 Registrar contato</button>
         <button class="btn" id="ficha-reuniao">📅 Reunião</button>
+        <button class="btn" id="ficha-pipe">🌡️ Pipe</button>
         <button class="btn" id="edit-cli">✏️ Editar</button>
         <button class="btn btn-danger icon-btn" id="del-cli" title="Excluir cliente">🗑️</button>
       </div>
@@ -3525,6 +3526,23 @@ function renderCliente360(el, id) {
       <div class="card kpi"><div class="kpi-label">Contato</div>
         <div class="kpi-sub" style="margin-top:6px">${c.telefone ? '📱 ' + esc(c.telefone) + '<br>' : ''}${c.email ? '✉️ ' + esc(c.email) : ''}${!c.telefone && !c.email ? '<span class="muted">Sem telefone/e-mail — edite o cadastro</span>' : ''}</div></div>
     </div>
+
+    ${(() => { // 🌡️ pipes deste cliente (os mesmos da aba Pipe da Produção)
+      const pipes = S.pipeMes.filter(pm => pm.clienteId === id).sort((a, b) => String(b.mes || '').localeCompare(String(a.mes || '')));
+      const ativos = pipes.filter(pm => pm.temperatura !== 'Perdido');
+      const aberto = somar(ativos, pm => Math.max(0, (pm.valorEsperado || 0) - (pm.realizado || 0)));
+      return `<div class="card mb"><div class="card-title">🌡️ Pipe deste cliente ${ativos.length ? `<span class="chip chip-acc">${fmtBRL(aberto)} em aberto</span>` : ''}
+          <span class="spacer"></span><button class="btn btn-sm btn-primary" id="ficha-pipe-novo" style="white-space:nowrap">➕ Novo</button></div>
+        ${pipes.length ? `<div class="tbl-wrap"><table class="tbl small"><thead><tr><th>Mês</th><th>Status</th><th class="right">Projeção</th><th class="right">Já entrou</th><th>Entrada prevista</th></tr></thead><tbody>${pipes.map(pm => `
+          <tr class="click" data-pipe-ficha="${pm.id}" ${pm.temperatura === 'Perdido' ? 'style="opacity:.55"' : ''}>
+            <td>${esc(fmtMes(pm.mes || ''))}</td>
+            <td>${pm.temperatura === 'Perdido' ? '🚫 Perdido' : pm.temperatura === 'Quente' ? '🔥 Quente' : pm.temperatura === 'Morno' ? '🌤 Morno' : pm.temperatura === 'Frio' ? '🧊 Frio' : '—'}${pm.operacao ? ' · ' + esc(pm.operacao) : ''}</td>
+            <td class="num">${fmtBRL(pm.valorEsperado || 0)}</td>
+            <td class="num">${pm.realizado ? fmtBRL(pm.realizado) : '—'}</td>
+            <td class="small">${pm.dataEntrada ? fmtDate(pm.dataEntrada) : '—'}</td></tr>`).join('')}</tbody></table></div>
+          <p class="small muted mt">Toque num pipe para editar ou dar "Entrou!". Eles aparecem também em Produção → Pipe.</p>`
+        : '<div class="muted small">Nenhum pipe para este cliente. Toque em <b>➕ Novo</b> — ele entra direto na aba Pipe da Produção.</div>'}</div>`;
+    })()}
 
     <div class="card mb">
       <div class="row wrap" style="margin-bottom:12px">
@@ -3594,6 +3612,9 @@ function renderCliente360(el, id) {
 
   el.querySelector('#reg-contato').onclick = () => modalRegistrarContato(id, null);
   el.querySelector('#ficha-reuniao').onclick = () => modalReuniao(null, { clienteId: id });
+  el.querySelector('#ficha-pipe').onclick = () => modalPipeMes(null, { clienteId: id });
+  { const np = el.querySelector('#ficha-pipe-novo'); if (np) np.onclick = () => modalPipeMes(null, { clienteId: id }); }
+  el.querySelectorAll('[data-pipe-ficha]').forEach(tr => tr.onclick = () => modalPipeMes(tr.getAttribute('data-pipe-ficha')));
   el.querySelector('#edit-cli').onclick = () => modalEditarCliente(id);
   { const ep = el.querySelector('#edit-potencial'); if (ep) ep.onclick = () => modalPotencial(id); }
   const addLb = el.querySelector('#add-lembrete');
@@ -4573,10 +4594,11 @@ function modalRecorrente(posId) {
 /* atalho de menu "🔮 Pipe" → abre a Produção já na aba Pipe (cadastro de projeções do mês) */
 Pages.pipe = { title: 'Pipe', render() { UI.abaProducao = 'pipe'; nav('producao'); } };
 
-function modalPipeMes(id) {
+function modalPipeMes(id, pre) { // pre: { clienteId } — abre já com o cliente (ex.: botão Pipe da ficha)
+  pre = pre || {};
   const p = id ? S.pipeMes.find(x => x.id === id) : null;
   const pendente = p ? Math.max(0, (p.valorEsperado || 0) - (p.realizado || 0)) : 0;
-  const cliAtual = p && p.clienteId ? getCliente(p.clienteId) : null;
+  const cliAtual = p && p.clienteId ? getCliente(p.clienteId) : (!p && pre.clienteId ? getCliente(pre.clienteId) : null);
   const leadAtual = p && p.leadId ? getLead(p.leadId) : null;
   const mesesOp = []; // mês passado até 6 meses à frente (pipes de agosto, setembro… nascem daqui)
   for (let i = -1; i <= 6; i++) mesesOp.push(addMes(UI.mesRef, i));
