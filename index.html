@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v28 \u00b7 28/10 10:31";</script>
+<script>window.__APPVER__ = "investmax-v29 \u00b7 02/11 18:09";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -771,7 +771,8 @@ const Store = {
     if (st.config.fatorLifetime == null) st.config.fatorLifetime = 0.5;   // receita pontual da Lifetime = ROA da plataforma × este fator (padrão: metade)
     if (st.config.fatorLifetimeRV == null) st.config.fatorLifetimeRV = 0.7; // exceção: SÓ ações puro (BTG fica com 30%); fundo de ações e o resto = 50%
     if (!st.config.ativosCustom) st.config.ativosCustom = []; // títulos de ativo criados pelo usuário (sugestões permanentes)
-    if (!st.config.assuntosContato) st.config.assuntosContato = ['Renda Fixa', 'Renda Variável', 'Fundos', 'Previdência', 'Câmbio', 'Crédito', 'Seguros', 'COE', 'Tributário/Sucessão', 'Portabilidade', 'Relacionamento']; // assuntos tratados nos contatos (base do gráfico)
+    if (st.config.assuntosContato && !st.config.assuntosContato.includes('Movimentação de carteira')) st.config.assuntosContato.push('Movimentação de carteira');
+    if (!st.config.assuntosContato) st.config.assuntosContato = ['Renda Fixa', 'Renda Variável', 'Fundos', 'Previdência', 'Câmbio', 'Crédito', 'Seguros', 'COE', 'Tributário/Sucessão', 'Portabilidade', 'Relacionamento', 'Movimentação de carteira']; // assuntos tratados nos contatos (base do gráfico)
     for (const ct of st.contatos || []) if (!Array.isArray(ct.assuntos)) ct.assuntos = []; // contatos antigos: sem assuntos ainda
     /* reuniões v2: tipo + etapa (fluxo em colunas) + pendências + retorno */
     for (const r of st.reunioes) {
@@ -1037,6 +1038,7 @@ const CANAIS = [
   { id: 'online', nome: 'Online', ico: '🖥️' },
   { id: 'presencial', nome: 'Presencial', ico: '🤝' },
   { id: 'outro', nome: 'Outro', ico: '📌' },
+  { id: 'carteira', nome: 'Mov. de carteira', ico: '💼' }, // automático: toda movimentação do cliente dá baixa na régua
 ];
 function canalInfo(id) { return CANAIS.find(c => c.id === id) || CANAIS[4]; }
 
@@ -1081,6 +1083,23 @@ function sevRegua(dias, canal) {
 function chipDias(dias, canal, title) { // chip mostrando DIAS sem contato (pedido do usuário: dias, não letras)
   const sev = sevRegua(dias, canal);
   return `<span class="chip ${sev.cls}" title="${esc(title || '')}">${dias == null ? 'nunca' : dias + (dias === 1 ? ' dia' : ' dias')}</span>`;
+}
+/* 💼 movimentação do cliente (aplicação, resgate, entrada, saída) dá baixa na régua sozinha:
+   assunto = o tema do produto · como = Mov. de carteira · obs = a movimentação feita */
+function assuntoDaClasse(classe, ativo) {
+  const t = foldTxt((classe || '') + ' ' + (ativo || ''));
+  if (/previd/.test(t)) return 'Previdência';
+  if (/\bcoe\b/.test(t)) return 'COE';
+  if (/fundo|multimercado/.test(t)) return 'Fundos';
+  if (/acoes|oportunidade rv/.test(t)) return 'Renda Variável';
+  if (/pos com|pos sem|pre fixado|inflacao|cdb|lca|lci|tesouro|\bcri\b|\bcra\b|debenture/.test(t)) return 'Renda Fixa';
+  return 'Movimentação de carteira';
+}
+function assuntoDaOperacao(op) { return /portab/.test(foldTxt(op || '')) ? 'Portabilidade' : 'Movimentação de carteira'; }
+function baixaReguaMovimento(clienteId, data, textos, assuntos) {
+  if (!clienteId) return;
+  const d = data && data <= hoje() ? data : hoje(); // lançamento com data futura conta como contato de hoje
+  registrarContato(clienteId, 'carteira', d, [].concat(textos).filter(Boolean).join(' · '), false, [...new Set([].concat(assuntos).filter(Boolean))]);
 }
 function registrarContato(clienteId, canal, data, obs, soHistorico, assuntos) {
   // soHistorico: entra na ficha do cliente mas NÃO conta como contato na régua (ex.: reagendado/recusado sem conversa)
@@ -1320,6 +1339,9 @@ function entradasNoMes(mk) { return somar(captacoesDoMes(mk).filter(c => !ehSaid
 function saidasNoMes(mk) { return somar(captacoesDoMes(mk).filter(ehSaida), c => c.valor); }
 // decisão do usuário: a captação da meta é LÍQUIDA (entradas − saídas)
 function captadoNoMes(mk) { return entradasNoMes(mk) - saidasNoMes(mk); }
+/* como o assessor quer acompanhar a meta: captação líquida total ou só NNM (escolha salva, vale em todo aparelho) */
+function capMetaModo() { return S.config.capMetaVisao === 'nnm' ? 'nnm' : 'total'; }
+function captadoMeta(mk) { return capMetaModo() === 'nnm' ? nnmDoMes(mk) : captadoNoMes(mk); }
 function nnmDoMes(mk) { // NNM líquido: entradas de dinheiro novo − saídas que abatem
   const cs = captacoesDoMes(mk);
   return somar(cs.filter(c => !ehSaida(c) && c.nnm), c => c.valor) - somar(cs.filter(c => ehSaida(c) && c.nnm), c => c.valor);
@@ -1890,7 +1912,7 @@ function confirmar(titulo, msg, onOk, opts) {
 function inputFld(o) {
   return `<div class="fld ${o.full ? 'full' : ''}"><label>${o.label}</label>
     <input data-f="${o.id}" type="${o.type || 'text'}" value="${esc(o.value == null ? '' : o.value)}"
-      placeholder="${esc(o.placeholder || '')}" ${o.step ? `step="${o.step}"` : ''} ${o.list ? `list="${esc(o.list)}"` : ''}>
+      placeholder="${esc(o.placeholder || '')}" ${o.step ? `step="${o.step}"` : ''} ${o.list ? `list="${esc(o.list)}"` : ''} ${o.moeda ? 'data-moeda="1"' : ''}>
     ${o.hint ? `<div class="hint">${o.hint}</div>` : ''}</div>`;
 }
 const ATIVOS_COMUNS = ['Ações', 'CDB', 'COE', 'CRA', 'CRI', 'Debênture', 'Fundo', 'LCA', 'LCI', 'Previdência', 'Tesouro Direto'];
@@ -2013,9 +2035,42 @@ function datalistEmissores() { // sugestões do campo Emissor: os já usados
   for (const p of S.recorrentes) if (p.emissor) usados.add(p.emissor);
   return `<datalist id="dl-emissores">${[...usados].sort().map(x => `<option value="${esc(x)}">`).join('')}</datalist>`;
 }
-function moneyFld(o) { // dinheiro como texto (aceita 1.500,50 / 1,5M)
-  return inputFld({ ...o, type: 'text', value: o.value == null ? '' : (o.raw ? o.value : String(o.value).replace('.', ',')), placeholder: o.placeholder || 'ex.: 150.000' });
+function fmtCampoMoeda(n, maxDec) { return 'R$ ' + Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: maxDec || 2 }); }
+function moneyFld(o) { // dinheiro como texto (aceita 1.500,50 / 1,5M / 100 mil) — formata sozinho em R$ 100.000,00
+  if (o.raw) return inputFld({ ...o, type: 'text', value: o.value == null ? '' : o.value, placeholder: o.placeholder || 'ex.: 150.000' });
+  const n = o.value == null || o.value === '' ? NaN : parseValor(o.value);
+  return inputFld({ ...o, type: 'text', moeda: true, value: o.value == null ? '' : (isNaN(n) ? String(o.value) : fmtCampoMoeda(n, 6)), placeholder: o.placeholder || 'ex.: 150.000 ou 100 mil' });
 }
+/* campos de R$: pontua os milhares enquanto digita; ao sair do campo vira R$ 100.000,00 */
+document.addEventListener('input', e => {
+  const el = e.target;
+  if (!el.matches || !el.matches('[data-moeda]')) return;
+  const bruto = el.value.replace(/^\s*r\$\s*/i, '');
+  if (!bruto) { el.value = ''; return; }
+  if (!/^[\d.]+$/.test(bruto) || el.selectionStart !== el.value.length) return; // "100 mil", "1,5M", centavos ou edição no meio: não mexe
+  const apagando = String(e.inputType || '').startsWith('delete');
+  if (!apagando && bruto.includes('.') && !/\.\d{3,}$/.test(bruto)) return; // ponto digitado pela pessoa (ex.: 8.5M)
+  const d = bruto.replace(/\./g, '').replace(/^0+(?=\d)/, '');
+  el.value = d ? 'R$ ' + d.replace(/\B(?=(\d{3})+$)/g, '.') : '';
+});
+document.addEventListener('focusout', e => {
+  const el = e.target;
+  if (!el.matches || !el.matches('[data-moeda]') || !el.value.trim()) return;
+  const n = parseValor(el.value);
+  if (!isNaN(n)) el.value = fmtCampoMoeda(n);
+});
+/* seletor Total | NNM da captação (Produção e Dashboard) */
+function segCapModo() {
+  const m = capMetaModo();
+  return `<span class="seg seg-mini" title="Como acompanhar a captação e a meta"><button type="button" class="${m === 'total' ? 'active' : ''}" data-capmodo="total">Total</button><button type="button" class="${m === 'nnm' ? 'active' : ''}" data-capmodo="nnm">NNM</button></span>`;
+}
+document.addEventListener('click', e => { // fase de captura: o toque no seletor não abre o cartão
+  const b = e.target.closest && e.target.closest('[data-capmodo]');
+  if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  S.config.capMetaVisao = b.getAttribute('data-capmodo');
+  Store.commit();
+}, true);
 function selectFld(o) {
   const ops = (o.options || []).map(op => {
     const [v, l] = Array.isArray(op) ? op : [op, op];
@@ -2296,7 +2351,7 @@ Pages.dashboard = {
   render(el) {
     const mk = UI.mesRef;
     const meta = metaDoMes(mk);
-    const captado = captadoNoMes(mk), receita = receitaAssessorNoMes(mk);
+    const captado = captadoMeta(mk), receita = receitaAssessorNoMes(mk);
     const avisos = avisosDoDia();
     const avisosPend = avisos.filter(a => a.status === 'pendente');
     const patTotal = patrimonioTotal();
@@ -2356,7 +2411,7 @@ Pages.dashboard = {
     meses = meses.slice(-14);
     const evolucao = meses.map(m => ({
       label: fmtMes(m).replace(' 20', '/'),
-      valor: captadoNoMes(m),
+      valor: captadoMeta(m),
       sub: 'meta ' + fmtCompact(metaDoMes(m).captacao) + ' · receita ' + fmtBRLc(receitaAssessorNoMes(m)),
       cor: m === mk ? 'var(--s1)' : 'var(--accent-strong)',
       destaque: m === mk,
@@ -2390,9 +2445,9 @@ Pages.dashboard = {
 
     /* 🍱 blocos do topo (layout "Bento"): números do mês + atalhos */
     const repMin = S.config.repasseMin || 38, repMax = S.config.repasseMax || 45;
-    const capAnt = captadoNoMes(addMes(mk, -1));
+    const capAnt = captadoMeta(addMes(mk, -1));
     const varCap = capAnt > 0 ? (captado - capAnt) / capAnt : null;
-    const ult6 = [-5, -4, -3, -2, -1, 0].map(d => { const m = addMes(mk, d); return { m, v: captadoNoMes(m) }; });
+    const ult6 = [-5, -4, -3, -2, -1, 0].map(d => { const m = addMes(mk, d); return { m, v: captadoMeta(m) }; });
     const maxBar = Math.max(1, ...ult6.map(x => Math.abs(x.v)));
     const reu1 = primeirasReunioesNoMes(mk), metaReu = S.config.metaReuniao1 || 12;
     const niverHoje = nivers.filter(x => x.aniv.dias === 0);
@@ -2402,7 +2457,7 @@ Pages.dashboard = {
     const bentoHTML = `<div class="bento mb">
       <div class="bt bt-cap click" id="dash-kpi-cap" title="Ver captações, entradas e saídas">
         <div class="bt-txt">
-          <span class="bt-l">Captação líquida · ${esc(fmtMes(mk))}</span>
+          <span class="bt-l">Captação líquida${capMetaModo() === 'nnm' ? ' NNM' : ''} · ${esc(fmtMes(mk))} ${segCapModo()}</span>
           <span class="bt-v bt-v-xl">${fmtBRL(captado)}</span>
           <span class="bt-s">${varCap != null ? `<b class="${varCap >= 0 ? 'up' : 'down'}">${varCap >= 0 ? '↑' : '↓'} ${fmtPct(Math.abs(varCap), 0)}</b> vs mês anterior · ` : ''}${pctMeta(captado, meta.captacao)}</span>
           ${projCap ? `<span class="bt-s">Projeção do ritmo: <b class="${projCap >= meta.captacao ? 'up' : 'down'}">${fmtCompact(projCap)}</b></span>` : ''}
@@ -2858,12 +2913,12 @@ Pages.regua = {
       <span class="chip chip-x">+${f.D}d · ${resumo[4]}</span>`;
 
     const segCanais = [`<button class="${!canal ? 'active' : ''}" data-canal="">Geral</button>`]
-      .concat(CANAIS.filter(k => k.id !== 'outro').map(k =>
+      .concat(CANAIS.filter(k => k.id !== 'outro' && k.id !== 'carteira').map(k =>
         `<button class="${canal === k.id ? 'active' : ''}" data-canal="${k.id}">${k.ico} ${k.nome}</button>`)).join('');
 
     const rows = linhas.map(l => {
       const c = l.c;
-      const porCanal = CANAIS.filter(k => k.id !== 'outro').map(k => {
+      const porCanal = CANAIS.filter(k => k.id !== 'outro' && k.id !== 'carteira').map(k => {
         const rc = ultimoContato(c.id, k.id);
         const sevC = sevRegua(rc.dias, slaCanal(k.id) ? k.id : null);
         const cor = rc.dias == null ? 'var(--surface3)' : sevC.ord >= 4 ? 'var(--crit)' : sevC.ord >= 2 ? 'var(--warn)' : 'var(--good)';
@@ -3482,7 +3537,7 @@ function renderCliente360(el, id) {
       <td class="mono">${esc(ct.numero)}</td><td class="num">${fmtBRLc(ct.patrimonio)}</td><td class="right muted small">editar ›</td>
     </tr>`).join('');
 
-  const canaisHTML = CANAIS.filter(k => k.id !== 'outro').map(k => {
+  const canaisHTML = CANAIS.filter(k => k.id !== 'outro' && k.id !== 'carteira').map(k => {
     const rc = reguaCliente(c, k.id);
     return `<tr><td>${k.ico} ${k.nome}</td>
       <td class="num">${rc.data ? fmtDate(rc.data) + ` <span class="muted">(${rc.dias}d)</span>` : '<span class="muted">nunca</span>'}</td>
@@ -4249,6 +4304,7 @@ function salvarReceitaRecorrente(d, aoTerminar, aoCancelar) { // d: {data, clien
       if (!pos.ativo && d.ativo) pos.ativo = d.ativo;
       if (!pos.emissor && d.emissor) pos.emissor = d.emissor;
       pos.movimentos.push({ id: uid('mv'), data: d.data, valor: d.valor });
+      if (!d.semRegua) baixaReguaMovimento(d.clienteId, d.data, 'Aporte ' + fmtBRLc(d.valor) + ' em ' + d.produto, assuntoDaClasse(d.classe || pos.classe, d.ativo || pos.ativo));
       toast('✅ Aporte registrado — receita mensal recalculada');
       aoTerminar(pos);
     } else {
@@ -4260,6 +4316,7 @@ function salvarReceitaRecorrente(d, aoTerminar, aoCancelar) { // d: {data, clien
         movimentos: [{ id: uid('mv'), data: d.data, valor: d.valor }],
       };
       S.recorrentes.push(nova);
+      if (!d.semRegua) baixaReguaMovimento(d.clienteId, d.data, 'Aplicação ' + fmtBRLc(d.valor) + ' em ' + d.produto, assuntoDaClasse(nova.classe, nova.ativo));
       toast('✅ Receita recorrente criada — entra todo mês sozinha');
       aoTerminar(nova);
     }
@@ -4364,6 +4421,7 @@ function modalCaptacao(id, prefill) { // prefill: {clienteId, nomeLivre, valor, 
           const pm = S.pipeMes.find(x => x.id === pre.pipeId);
           if (pm) { pm.realizado = (pm.realizado || 0) + valor; extraPipe = ' — pipe atualizado (' + fmtBRL(pm.realizado) + ' de ' + fmtBRL(pm.valorEsperado) + ')'; }
         }
+        if (!cp) baixaReguaMovimento(alvo.clienteId, alvo.data, (ctipo === 'saida' ? 'Saída ' : 'Entrada ') + fmtBRLc(valor) + (alvo.operacao ? ' · ' + alvo.operacao : ''), assuntoDaOperacao(alvo.operacao));
         const efeitoNovo = legado ? 0 : (alvo.patAplicado || 0);
         const extraPat = alvo.clienteId && efeitoNovo ? ' · patrimônio do cliente ' + (efeitoNovo > 0 ? 'somado' : 'reduzido') : '';
         closeModal(); toast((ctipo === 'saida' ? '✅ Saída registrada' : '✅ Captação salva') + extraPipe + extraPat); Store.commit();
@@ -4434,7 +4492,7 @@ function modalAlocacao(id, tipoInicial) {
       const calcCabeca = () => {
         if (recEditada) return;
         const v = parseValor(fValor.value), p = parseValor(fPct.value);
-        if (!isNaN(v) && !isNaN(p)) fRec.value = (Math.round(v * p) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+        if (!isNaN(v) && !isNaN(p)) fRec.value = fmtCampoMoeda(Math.round(v * p) / 100);
       };
       fPct.addEventListener('input', () => { recEditada = false; calcCabeca(); });
       fValor.addEventListener('input', () => { calcCabeca(); calcRec(); });
@@ -4460,7 +4518,7 @@ function modalAlocacao(id, tipoInicial) {
           if (!f.produto) { toast('Informe o nome do fundo/produto.', 'err'); return; }
           if (!f.clienteId && !f.nomeLivre) { toast('Escolha o cliente ou informe um nome.', 'err'); return; }
           salvarReceitaRecorrente(
-            { data: f.data, clienteId: f.clienteId || null, nomeLivre: f.nomeLivre, ativo: f.ativo || null, produto: f.produto, emissor: f.emissor || null, classe: f.classe || null, valor, taxaAa: taxaAa / 100, clinica },
+            { data: f.data, clienteId: f.clienteId || null, nomeLivre: f.nomeLivre, ativo: f.ativo || null, produto: f.produto, emissor: f.emissor || null, classe: f.classe || null, valor, taxaAa: taxaAa / 100, clinica, semRegua: !!al },
             () => { // sucesso: se estava editando um PONTUAL, apaga ele (virou recorrente)
               if (al) { S.alocacoes = S.alocacoes.filter(x => x.id !== al.id); toast('✅ Corrigido: virou receita recorrente'); }
               closeAllModals(); UI.abaProducao = 'receita'; Store.commit();
@@ -4482,7 +4540,10 @@ function modalAlocacao(id, tipoInicial) {
           receita, tipoReceita: 'cabeca', clinica,
         };
         if (al) Object.assign(al, dados);
-        else S.alocacoes.push({ id: uid('al'), ...dados });
+        else {
+          S.alocacoes.push({ id: uid('al'), ...dados });
+          baixaReguaMovimento(dados.clienteId, dados.data, 'Aplicação ' + fmtBRLc(valor) + (dados.produto ? ' em ' + dados.produto : ''), assuntoDaClasse(dados.classe, dados.ativo));
+        }
         closeModal(); toast('✅ Alocação salva'); Store.commit();
       };
       const del = $('[data-act="del"]');
@@ -4518,6 +4579,7 @@ function modalMovimento(posId, sinal) {
         }
         if (f.data < pos.inicio) pos.inicio = f.data; // movimento retrodatado: a posição passa a existir desde ele
         pos.movimentos.push({ id: uid('mv'), data: f.data, valor: sinal * valor });
+        baixaReguaMovimento(pos.clienteId, f.data, (sinal > 0 ? 'Aporte ' : 'Resgate ') + fmtBRLc(valor) + (sinal > 0 ? ' em ' : ' de ') + pos.produto, assuntoDaClasse(pos.classe, pos.ativo));
         const novoSaldo = saldoRecorrente(pos);
         closeModal();
         toast(`✅ ${sinal > 0 ? 'Aporte' : 'Resgate'} registrado — novo saldo ${fmtBRL(novoSaldo)} · receita ~${fmtBRLc(novoSaldo * pos.taxaAa / 12)}/mês`);
@@ -4754,7 +4816,7 @@ Pages.producao = {
   render(el) {
     const mk = UI.mesRef;
     const meta = metaDoMes(mk);
-    const captado = captadoNoMes(mk);
+    const captado = captadoMeta(mk); // total ou NNM, conforme o seletor do cartão
     const recCabeca = receitaCabecaNoMes(mk), recRecorrente = receitaRecorrenteNoMes(mk);
     const recTipo = UI.recTipo || 'tudo'; // filtro da aba Receita (Tudo/Pontual/Recorrente) também muda a meta aqui em cima
     const receita = (recTipo === 'recorrente' ? 0 : recCabeca) + (recTipo === 'pontual' ? 0 : recRecorrente);
@@ -4888,8 +4950,11 @@ Pages.producao = {
             ${barra}</div>`;
         const barraBatida = `<div class="meter good"><i style="width:100%"></i></div>
           <div class="row small mt" style="margin-top:6px"><span class="dim mono">✅</span><span class="spacer"></span><span class="muted mono">meta do mês já batida</span></div>`;
-        return cartao('kpi-captacao', '💰 Captação líquida · meta ' + esc(fmtCompact(meta.captacao)), fmtBRL(captado),
-            `⬇️ ${fmtCompact(entradasNoMes(mk))} entradas · ⬆️ ${fmtCompact(saidasNoMes(mk))} saídas`,
+        const ehNnm = capMetaModo() === 'nnm';
+        const capsMes = captacoesDoMes(mk);
+        return cartao('kpi-captacao', `<span style="float:right;margin:-4px 0 0 8px">${segCapModo()}</span>💰 Captação líquida${ehNnm ? ' NNM' : ''} · meta ` + esc(fmtCompact(meta.captacao)), fmtBRL(captado),
+            ehNnm ? `✅ ${fmtCompact(somar(capsMes.filter(c => !ehSaida(c) && c.nnm), c => c.valor))} NNM · ⬆️ ${fmtCompact(somar(capsMes.filter(c => ehSaida(c) && c.nnm), c => c.valor))} saídas NNM`
+              : `⬇️ ${fmtCompact(entradasNoMes(mk))} entradas · ⬆️ ${fmtCompact(saidasNoMes(mk))} saídas`,
             meterHTML(captado, meta.captacao, { fmt: fmtCompact }),
             'Clique para ver todas as captações, entradas e saídas')
           + cartao('kpi-receita', '📈 Receita' + (recTipo === 'pontual' ? ' (só ⚡ pontual)' : recTipo === 'recorrente' ? ' (só 🔁 recorrente)' : '') + ' · meta ' + esc(fmtCompact(meta.receita)), fmtBRLc(receita),
@@ -5363,7 +5428,7 @@ function linhaAtivoRegistro() { // uma linha de receita: escolhe pontual/recorre
       ${fld('produto', 'Característica (nome completo)', 'list="dl-caracteristicas" placeholder="ex.: CDB Banco Pan 15%"', 'ao repetir um produto já usado, a classe/emissor/% vêm sozinhos (dá pra alterar)')}
       ${fld('emissor', 'Emissor / gestora', 'list="dl-emissores" placeholder="ex.: Banco Pan"')}
       <div class="fld"><label>Classe</label><select data-rf="classe">${classeOpts}</select></div>
-      ${fld('valor', 'Valor aplicado (R$)', 'placeholder="ex.: 150.000"')}
+      ${fld('valor', 'Valor aplicado (R$)', 'placeholder="ex.: 150.000 ou 100 mil" data-moeda="1"')}
       ${fld('pct', 'ROA da plataforma (%)', 'placeholder="ex.: 2,5"', 'o ROA cheio do BTG — a Lifetime fica com metade (ou 70% se for ações puro)', 'reg-so-pontual')}
       <div class="fld reg-so-pontual"><label>É ações puro?</label>
         <label class="row" style="cursor:pointer;user-select:none;gap:8px;padding:8px 0"><input type="checkbox" data-rf="rv"> <span>Sim — ações puro (Lifetime 70%)</span></label>
@@ -5531,11 +5596,13 @@ function wireRegistro(el) {
 
     /* 2º: aplicar — tudo validado */
     const resumo = [];
+    const mov = { data, textos: [], assuntos: [] }; // uma baixa só na régua, com tudo que foi feito
     if (f.capAtiva) {
       const cp = { id: uid('cp'), data, valor: capValor, tipo: rcapTipo, clienteId, nomeLivre: clienteId ? null : nomeLivre, conta: null, operacao: f.capOperacao || 'TED', nnm: f.capNnm === 'true', pipeId: null };
       S.captacoes.push(cp);
       cp.patAplicado = moverPatrimonioConta(clienteId, efeitoCaptacaoPatrimonio(cp)); // patrimônio segue a captação (guarda o delta real)
       resumo.push((rcapTipo === 'saida' ? 'saída ' : 'captação ') + fmtBRL(capValor));
+      mov.textos.push((rcapTipo === 'saida' ? 'Saída ' : 'Entrada ') + fmtBRLc(capValor) + ' · ' + cp.operacao); mov.assuntos.push(assuntoDaOperacao(cp.operacao));
     }
     // ativos pontuais: aplica direto; recorrentes: fila (cada um pode pedir confirmação de aporte)
     // registrarAtivo só quando o item é DE FATO salvo (não antes — senão o cancelamento sujaria a lista)
@@ -5553,14 +5620,15 @@ function wireRegistro(el) {
           receita, tipoReceita: 'cabeca',
         });
         resumo.push('receita pontual ' + fmtBRLc(receita) + (it.rv ? ' (ações puro)' : ''));
+        mov.textos.push('Aplicação ' + fmtBRLc(it.valor) + ' em ' + it.produto); mov.assuntos.push(assuntoDaClasse(it.classe, it.ativo));
       } else recorrentes.push(it);
     }
 
     const processarRecorrentes = (i) => {
-      if (i >= recorrentes.length) { finalizar(resumo, clienteId, nomeLivre); return; }
+      if (i >= recorrentes.length) { finalizar(resumo, clienteId, nomeLivre, mov); return; }
       const it = recorrentes[i];
-      salvarReceitaRecorrente({ data, clienteId, nomeLivre, ativo: it.ativo, produto: it.produto, emissor: it.emissor, classe: it.classe, valor: it.valor, taxaAa: it.taxaAa / 100 },
-        (pos) => { registrarAtivo(it.ativo); resumo.push('receita recorrente ~' + fmtBRLc(it.valor * pos.taxaAa / 12) + '/mês'); processarRecorrentes(i + 1); },
+      salvarReceitaRecorrente({ data, clienteId, nomeLivre, ativo: it.ativo, produto: it.produto, emissor: it.emissor, classe: it.classe, valor: it.valor, taxaAa: it.taxaAa / 100, semRegua: true },
+        (pos) => { mov.textos.push('Aplicação ' + fmtBRLc(it.valor) + ' em ' + it.produto); mov.assuntos.push(assuntoDaClasse(it.classe, it.ativo)); registrarAtivo(it.ativo); resumo.push('receita recorrente ~' + fmtBRLc(it.valor * pos.taxaAa / 12) + '/mês'); processarRecorrentes(i + 1); },
         () => { // cancelou o aporte deste ativo — os outros lançamentos ficam valendo, e seguimos pros próximos
           toast('Aporte de "' + esc(it.produto) + '" cancelado — segue o resto.', 'warn');
           processarRecorrentes(i + 1);
@@ -5568,10 +5636,11 @@ function wireRegistro(el) {
     };
     processarRecorrentes(0);
   };
-  function finalizar(resumo, clienteId, nomeLivre) {
-    const quem = clienteId ? (getCliente(clienteId) || {}).nome : nomeLivre;
+  function finalizar(resumo, clienteId, nomeLivre, mov) {
+    const quem = clienteId ? nomeExib(getCliente(clienteId) || {}) : nomeLivre;
     if (!resumo.length) { toast('Nada foi salvo.', 'warn'); salvarBtn.disabled = false; return; }
-    toast('✅ Registrado para <b>' + esc(quem || '—') + '</b>: ' + esc(resumo.join(' + ')) + ' — já no histórico e no Diário');
+    baixaReguaMovimento(clienteId, mov.data, mov.textos, mov.assuntos);
+    toast('✅ Registrado para <b>' + esc(quem || '—') + '</b>: ' + esc(resumo.join(' + ')) + ' — já no histórico, no Diário e na régua');
     Store.commit();
   }
 }
