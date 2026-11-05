@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v29 \u00b7 02/11 18:09";</script>
+<script>window.__APPVER__ = "investmax-v30 \u00b7 05/11 11:58";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -489,6 +489,10 @@ textarea { resize: vertical; min-height: 70px; }
 .bt-n { font-size: 28px; font-weight: 800; }
 .bt-donut { grid-column: 3 / span 2; grid-row: 2 / span 2; }
 .bt-donut .viz { margin: 4px 0; }
+@media (max-width: 1100px) { /* iPad e telas médias (com o menu lateral sobra pouco espaço): 2 colunas */
+  .bento { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bento .bt-donut { grid-column: span 2; grid-row: auto; }
+}
 @media (max-width: 780px) {
   .bento { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .bt { padding: 14px; border-radius: 20px; }
@@ -518,6 +522,24 @@ textarea { resize: vertical; min-height: 70px; }
 .cap-mini i.out { background: #b9c4c6; }
 @media (max-width: 1250px) { .capboxes { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 640px) { .capboxes { grid-template-columns: repeat(2, minmax(0, 1fr)); } .capbox .cb-v { font-size: 17px; } }
+
+/* ===== Dashboard: topo com avisos + pendências do dia ===== */
+.dash-topo { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 12px; margin-bottom: 12px; align-items: start; }
+.dash-alertas { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.dash-alertas .warn-banner { margin-bottom: 0; }
+.pend-dia { min-width: 0; }
+.pend-dia .card-title { margin-bottom: 8px; flex-wrap: wrap; }
+.pend-dia-it { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--line); cursor: pointer; min-width: 0; }
+.pend-dia-ico { font-size: 16px; flex: none; }
+.pend-dia-txt { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.pend-dia-txt b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* nenhum quadro pode ficar mais largo que a tela (senão o iPhone afasta o zoom e sobra uma faixa vazia à direita) */
+.grid > *, .dash-topo > * { min-width: 0; }
+.card { min-width: 0; max-width: 100%; }
+.bt-donut .viz { min-width: 0; }
+.bt-donut .legend { min-width: 0; max-width: 100%; }
+.bt-donut .legend .li { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-title { flex-wrap: wrap; row-gap: 6px; } /* botões no título descem de linha em vez de empurrar a tela */
 
 </style>
 </head>
@@ -2443,6 +2465,24 @@ Pages.dashboard = {
     const presas = captacoesPresasPatrimonio();
     const totalPresas = totalPresasReal(); // mudança REAL no patrimônio (respeita o piso em 0)
 
+    /* 📌 pendências do dia: vencendo hoje + atrasadas */
+    const pendAbertas = (typeof pendenciasAbertas === 'function' ? pendenciasAbertas() : (S.pendencias || []).filter(p => !p.feito));
+    const pendDia = pendAbertas.filter(p => p.prazo && p.prazo <= h).sort((a, b) => String(a.prazo).localeCompare(String(b.prazo)));
+    const pendAtras = pendDia.filter(p => p.prazo < h).length, pendHoje = pendDia.length - pendAtras;
+    const pendDiaHTML = `<div class="card pend-dia" id="card-pend-dia">
+      <div class="card-title">📌 Pendências do dia
+        ${pendDia.length ? `${pendHoje ? `<span class="chip chip-c">${pendHoje} hoje</span>` : ''}${pendAtras ? `<span class="chip chip-x">${pendAtras} atrasada${pendAtras === 1 ? '' : 's'}</span>` : ''}` : '<span class="chip chip-a">em dia ✓</span>'}
+        <span class="spacer"></span><a href="#/pendencias" class="small">ver todas ›</a></div>
+      ${pendDia.length ? pendDia.slice(0, 4).map(p => {
+        const quem = p.clienteId ? nomeExib(getCliente(p.clienteId) || {}) : p.leadId ? nomeSemConta(getLead(p.leadId) || {}) : p.tipo === 'area' ? (p.area || 'Área') : 'Comigo';
+        return `<div class="pend-dia-it click" data-pend-dia="${p.id}">
+          <span class="pend-dia-ico">${p.tipo === 'area' ? '🏢' : p.clienteId || p.leadId ? '👥' : '🙋'}</span>
+          <span class="pend-dia-txt"><b>${esc(p.descricao || '—')}</b><span class="small muted">${esc(quem)}</span></span>
+          <span class="chip ${p.prazo < h ? 'chip-x' : 'chip-c'}">${p.prazo < h ? fmtDateShort(p.prazo) : 'hoje'}</span></div>`;
+      }).join('') + (pendDia.length > 4 ? `<a href="#/pendencias" class="small" style="display:block;margin-top:6px">+ ${pendDia.length - 4} pendência${pendDia.length - 4 === 1 ? '' : 's'}</a>` : '')
+        : `<div class="small muted">Nada vencendo hoje.${pendAbertas.length ? ' ' + pendAbertas.length + ' em aberto pra frente.' : ''}</div>`}
+    </div>`;
+
     /* 🍱 blocos do topo (layout "Bento"): números do mês + atalhos */
     const repMin = S.config.repasseMin || 38, repMax = S.config.repasseMax || 45;
     const capAnt = captadoMeta(addMes(mk, -1));
@@ -2499,11 +2539,16 @@ Pages.dashboard = {
     el.innerHTML = pageHead('📊 Visão geral',
       hojeExtenso() + ' · ' + S.clientes.length + ' clientes · ' + fmtBRL(patTotal) + ' sob gestão', mesNavHTML()) +
 
+      (() => { // topo: avisos (esquerda) + 📌 pendências do dia (direita) — no celular um embaixo do outro
+        const alertas = (
       (presas.length ? `<div class="warn-banner">🔄 <div><b>${presas.length} ${presas.length === 1 ? 'captação' : 'captações'} sua${presas.length === 1 ? '' : 's'} ainda não ${presas.length === 1 ? 'entrou' : 'entraram'} no patrimônio</b> (${fmtBRL(totalPresas)} líquido) — foram lançadas antes desta regra existir. <button class="btn btn-sm btn-primary" id="aplicar-presas">Aplicar agora</button><br><span class="small">As captações da planilha não são tocadas (já estão no saldo).</span></div></div>` : '') +
       (patCritico > 0 ? `<div class="warn-banner crit-banner">🚨 <div><b>${fmtBRL(patCritico)} em patrimônio com contato CRÍTICO</b> (mais de ${S.config.reguaFaixas.D} dias sem falar). Priorize a <a href="#/regua">Régua</a> hoje.</div></div>` : '') +
 
       (window.Sync && !Sync.ativo() ? `<div class="warn-banner" id="banner-sync">☁️ <div><b>Seus dados estão só neste aparelho.</b> Ligue a sincronização para o celular e o iPad ficarem sempre iguais (cifrado — ninguém mais lê). <i>É uma vez só em cada aparelho.</i>
-        <div class="row wrap" style="margin-top:8px;gap:8px"><button class="btn btn-sm btn-primary" id="sync-ativar">☁️ Este é o aparelho com os dados certos — ativar</button><button class="btn btn-sm" id="sync-entrar">🔑 Já ativei no outro — tenho o código</button></div></div></div>` : '') +
+        <div class="row wrap" style="margin-top:8px;gap:8px"><button class="btn btn-sm btn-primary" id="sync-ativar">☁️ Este é o aparelho com os dados certos — ativar</button><button class="btn btn-sm" id="sync-entrar">🔑 Já ativei no outro — tenho o código</button></div></div></div>` : '')
+        );
+        return `<div class="dash-topo">${alertas ? `<div class="dash-alertas">${alertas}</div>` : ''}${pendDiaHTML}</div>`;
+      })() +
 
       bentoHTML +
 
@@ -2602,6 +2647,7 @@ Pages.dashboard = {
           : `<div class="empty">Registre contatos com <b>assuntos</b> (no 💬 Registrar contato) para ver aqui o que você mais trata${aper === 'mes' ? ' — ou veja <b>Tudo</b>' : ''}.</div>`}</div>`;
 
     wireMesNav(el);
+    el.querySelectorAll('[data-pend-dia]').forEach(x => x.onclick = () => modalPendencia(x.getAttribute('data-pend-dia')));
     if (window.Sync && !Sync.ativo()) Sync.wireCard(el); // botões do aviso de sincronização
     const kpiCap = el.querySelector('#dash-kpi-cap');
     if (kpiCap) kpiCap.onclick = () => { UI.abaProducao = 'captacao'; nav('producao'); };
