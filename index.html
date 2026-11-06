@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v30 \u00b7 05/11 11:58";</script>
+<script>window.__APPVER__ = "investmax-v31 \u00b7 06/11 11:34";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -524,7 +524,8 @@ textarea { resize: vertical; min-height: 70px; }
 @media (max-width: 640px) { .capboxes { grid-template-columns: repeat(2, minmax(0, 1fr)); } .capbox .cb-v { font-size: 17px; } }
 
 /* ===== Dashboard: topo com avisos + pendências do dia ===== */
-.dash-topo { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 12px; margin-bottom: 12px; align-items: start; }
+.dash-topo { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin-bottom: 12px; } /* avisos em cima, pendências do dia embaixo — cada um na largura toda */
+.pend-dia-lista { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); column-gap: 22px; }
 .dash-alertas { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .dash-alertas .warn-banner { margin-bottom: 0; }
 .pend-dia { min-width: 0; }
@@ -2473,13 +2474,13 @@ Pages.dashboard = {
       <div class="card-title">📌 Pendências do dia
         ${pendDia.length ? `${pendHoje ? `<span class="chip chip-c">${pendHoje} hoje</span>` : ''}${pendAtras ? `<span class="chip chip-x">${pendAtras} atrasada${pendAtras === 1 ? '' : 's'}</span>` : ''}` : '<span class="chip chip-a">em dia ✓</span>'}
         <span class="spacer"></span><a href="#/pendencias" class="small">ver todas ›</a></div>
-      ${pendDia.length ? pendDia.slice(0, 4).map(p => {
+      ${pendDia.length ? '<div class="pend-dia-lista">' + pendDia.slice(0, 6).map(p => {
         const quem = p.clienteId ? nomeExib(getCliente(p.clienteId) || {}) : p.leadId ? nomeSemConta(getLead(p.leadId) || {}) : p.tipo === 'area' ? (p.area || 'Área') : 'Comigo';
         return `<div class="pend-dia-it click" data-pend-dia="${p.id}">
           <span class="pend-dia-ico">${p.tipo === 'area' ? '🏢' : p.clienteId || p.leadId ? '👥' : '🙋'}</span>
           <span class="pend-dia-txt"><b>${esc(p.descricao || '—')}</b><span class="small muted">${esc(quem)}</span></span>
           <span class="chip ${p.prazo < h ? 'chip-x' : 'chip-c'}">${p.prazo < h ? fmtDateShort(p.prazo) : 'hoje'}</span></div>`;
-      }).join('') + (pendDia.length > 4 ? `<a href="#/pendencias" class="small" style="display:block;margin-top:6px">+ ${pendDia.length - 4} pendência${pendDia.length - 4 === 1 ? '' : 's'}</a>` : '')
+      }).join('') + '</div>' + (pendDia.length > 6 ? `<a href="#/pendencias" class="small" style="display:block;margin-top:6px">+ ${pendDia.length - 6} pendência${pendDia.length - 6 === 1 ? '' : 's'}</a>` : '')
         : `<div class="small muted">Nada vencendo hoje.${pendAbertas.length ? ' ' + pendAbertas.length + ' em aberto pra frente.' : ''}</div>`}
     </div>`;
 
