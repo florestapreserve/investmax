@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v31 \u00b7 06/11 11:34";</script>
+<script>window.__APPVER__ = "investmax-v32 \u00b7 10/11 22:22";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -821,6 +821,14 @@ const Store = {
       if (p.statusReuniao === undefined) p.statusReuniao = null;
       if (p.perdidoEm === undefined) p.perdidoEm = null;
     }
+    // pipe automático (1x): captação de entrada já lançada no mês do pipe, de cliente com pipe ainda zerado, passa a contar no "Já entrou"
+    if (!st.config._pipeAutoV1) {
+      st.config._pipeAutoV1 = true;
+      for (const cp of (st.captacoes || []).slice().sort((a, b) => String(a.data).localeCompare(String(b.data)))) {
+        const pm = pipeParaCaptacao(st, cp);
+        if (pm && !(pm.realizado > 0) && pm.mes === mesKey(cp.data)) baixarPipeComCaptacao(st, cp);
+      }
+    }
     return st;
   },
 
@@ -1361,6 +1369,22 @@ function ehSaida(c) { return c.tipo === 'saida'; }
 function entradasNoMes(mk) { return somar(captacoesDoMes(mk).filter(c => !ehSaida(c)), c => c.valor); }
 function saidasNoMes(mk) { return somar(captacoesDoMes(mk).filter(ehSaida), c => c.valor); }
 // decisão do usuário: a captação da meta é LÍQUIDA (entradas − saídas)
+/* 🌡️ captação de entrada de um cliente com pipe aberto baixa o pipe sozinha (soma no "Já entrou") */
+function pipeParaCaptacao(st, cp) {
+  if (!cp || cp.tipo === 'saida' || !cp.clienteId || cp.pipeId) return null;
+  const mk = mesKey(cp.data || hoje());
+  const abertos = (st.pipeMes || []).filter(pm => pm.clienteId === cp.clienteId && pm.temperatura !== 'Perdido'
+    && (pm.valorEsperado || 0) - (pm.realizado || 0) > 0 && (!pm.mes || pm.mes <= mk || pm.mes === addMes(mk, 1)));
+  abertos.sort((a, b) => (a.mes === mk ? -1 : 0) - (b.mes === mk ? -1 : 0) || String(a.mes || '').localeCompare(String(b.mes || '')));
+  return abertos[0] || null;
+}
+function baixarPipeComCaptacao(st, cp) { // devolve o pipe atualizado (ou null)
+  const pm = pipeParaCaptacao(st, cp);
+  if (!pm) return null;
+  pm.realizado = Math.round(((pm.realizado || 0) + cp.valor) * 100) / 100;
+  cp.pipeId = pm.id;
+  return pm;
+}
 function captadoNoMes(mk) { return entradasNoMes(mk) - saidasNoMes(mk); }
 /* como o assessor quer acompanhar a meta: captação líquida total ou só NNM (escolha salva, vale em todo aparelho) */
 function capMetaModo() { return S.config.capMetaVisao === 'nnm' ? 'nnm' : 'total'; }
@@ -2189,13 +2213,25 @@ function cmpBy(col, dir) {
 /* ---------- registrar contato (usado por régua, clientes, reuniões) ---------- */
 /* campo de múltiplos "assuntos" (chips) — mesmo padrão dos interesses do lead */
 function chipAssuntoHTML(nome) { return `<span class="chip chip-acc" data-ass="${esc(nome)}">${esc(nome)} <span class="ass-x" style="cursor:pointer">✕</span></span>`; }
+function assuntosPorUso() { // mais usados primeiro (contagem nos contatos); empate mantém a ordem da lista
+  const lista = assuntosContatoLista(), uso = new Map();
+  for (const ct of S.contatos) for (const a of assuntosDoContato(ct)) uso.set(foldTxt(a), (uso.get(foldTxt(a)) || 0) + 1);
+  return lista.map((a, i) => ({ a, n: uso.get(foldTxt(a)) || 0, i })).sort((x, y) => y.n - x.n || x.i - y.i).map(x => x.a);
+}
+const ASSUNTOS_VISIVEIS = 6;
+function opcoesAssunto(todos) {
+  const lista = assuntosPorUso();
+  const mostra = todos ? lista : lista.slice(0, ASSUNTOS_VISIVEIS);
+  return ['<option value="">— escolher assunto —</option>', ...mostra.map(a => `<option value="${esc(a)}">${esc(a)}</option>`),
+    !todos && lista.length > ASSUNTOS_VISIVEIS ? `<option value="__mais">⋯ Ver mais ${lista.length - ASSUNTOS_VISIVEIS} assuntos</option>` : '',
+    '<option value="__novo">➕ Novo assunto…</option>'].join('');
+}
 function assuntosChipsFld(atuais) {
-  const lista = assuntosContatoLista();
   const marcados = (atuais || []).filter(Boolean);
   return `<div class="fld full"><label>🗣️ Assuntos tratados <span class="small muted">(pode marcar vários — alimenta o gráfico do Dashboard)</span></label>
     <div id="ct-ass-chips" class="pill-row" style="margin-bottom:6px">${marcados.map(chipAssuntoHTML).join('') || '<span class="small muted" id="ass-vazio">Nenhum ainda.</span>'}</div>
     <div class="row" style="gap:6px">
-      <select id="ct-ass-sel" style="flex:1">${['<option value="">— escolher assunto —</option>', ...lista.map(a => `<option value="${esc(a)}">${esc(a)}</option>`), '<option value="__novo">➕ Novo assunto…</option>'].join('')}</select>
+      <select id="ct-ass-sel" style="flex:1">${opcoesAssunto(false)}</select>
       <button type="button" class="btn btn-sm" id="ct-ass-add">Adicionar</button>
     </div>
     <div id="ct-ass-nova" class="row" style="gap:6px;margin-top:6px;display:none">
@@ -2218,7 +2254,11 @@ function wireAssuntosChips(el) { // liga os chips e devolve () => lista de assun
   box.querySelectorAll('.ass-x').forEach(x => x.onclick = () => x.closest('[data-ass]').remove());
   const sel = el.querySelector('#ct-ass-sel'), nova = el.querySelector('#ct-ass-nova');
   const inpNovo = () => el.querySelector('#ct-ass-novo-nome');
-  sel.onchange = () => { const abre = sel.value === '__novo'; nova.style.display = abre ? '' : 'none'; if (!abre) inpNovo().value = ''; }; // fechou "novo" → limpa o rascunho (não vaza depois)
+  sel.onchange = () => {
+    if (sel.value === '__mais') { sel.innerHTML = opcoesAssunto(true); sel.value = ''; setTimeout(() => { try { sel.showPicker ? sel.showPicker() : sel.focus(); } catch (e) { sel.focus(); } }, 50); return; } // mostra todos
+    const abre = sel.value === '__novo'; nova.style.display = abre ? '' : 'none'; if (!abre) inpNovo().value = '';
+    if (sel.value && !abre) { add(sel.value); sel.value = ''; } // escolheu = já entra (sem precisar do "Adicionar")
+  }; // fechou "novo" → limpa o rascunho (não vaza depois)
   el.querySelector('#ct-ass-add').onclick = () => {
     if (sel.value === '__novo') { nova.style.display = ''; inpNovo().focus(); return; }
     if (sel.value) { add(sel.value); sel.value = ''; }
@@ -4464,6 +4504,7 @@ function modalCaptacao(id, prefill) { // prefill: {clienteId, nomeLivre, valor, 
           alvo.patAplicado = moverPatrimonioConta(alvo.clienteId, efeitoCaptacaoPatrimonio(alvo)); // guarda o delta real
         }
         let extraPipe = '';
+        if (!cp && !(pre && pre.pipeId)) { const pmAuto = baixarPipeComCaptacao(S, alvo); if (pmAuto) extraPipe = ' — 🌡️ pipe baixado (' + fmtBRL(pmAuto.realizado) + ' de ' + fmtBRL(pmAuto.valorEsperado) + ')'; }
         if (!cp && pre && pre.pipeId && ctipo === 'entrada') { // veio do pipe: atualiza o realizado sozinho
           const pm = S.pipeMes.find(x => x.id === pre.pipeId);
           if (pm) { pm.realizado = (pm.realizado || 0) + valor; extraPipe = ' — pipe atualizado (' + fmtBRL(pm.realizado) + ' de ' + fmtBRL(pm.valorEsperado) + ')'; }
@@ -5649,6 +5690,8 @@ function wireRegistro(el) {
       S.captacoes.push(cp);
       cp.patAplicado = moverPatrimonioConta(clienteId, efeitoCaptacaoPatrimonio(cp)); // patrimônio segue a captação (guarda o delta real)
       resumo.push((rcapTipo === 'saida' ? 'saída ' : 'captação ') + fmtBRL(capValor));
+      const pmAuto = baixarPipeComCaptacao(S, cp);
+      if (pmAuto) resumo.push('pipe baixado (' + fmtBRL(pmAuto.realizado) + ' de ' + fmtBRL(pmAuto.valorEsperado) + ')');
       mov.textos.push((rcapTipo === 'saida' ? 'Saída ' : 'Entrada ') + fmtBRLc(capValor) + ' · ' + cp.operacao); mov.assuntos.push(assuntoDaOperacao(cp.operacao));
     }
     // ativos pontuais: aplica direto; recorrentes: fila (cada um pode pedir confirmação de aporte)
