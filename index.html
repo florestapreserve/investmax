@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v34 \u00b7 24/11 23:02";</script>
+<script>window.__APPVER__ = "investmax-v35 \u00b7 25/11 15:12";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -5258,7 +5258,8 @@ function renderCaptacao(mk) {
     g[ehSaida(c) ? 'saida' : 'entrada'] += c.valor;
     if (c.data > g.ultima) g.ultima = c.data;
   }
-  const clientesOrd = Object.values(porCliente).sort((a, b) => (b.entrada - b.saida) - (a.entrada - a.saida));
+  const stCapCli = sortState('capCli', 'liquido');
+  const clientesOrd = Object.values(porCliente).map(g => ({ ...g, liquido: g.entrada - g.saida })).sort(cmpBy(stCapCli.col, stCapCli.dir)); // colunas clicáveis ordenam
 
   /* detalhado (com filtro de cliente) */
   let detalhe = caps;
@@ -5280,7 +5281,7 @@ function renderCaptacao(mk) {
   let lista;
   if (UI.capVisao === 'cliente') {
     lista = `<div class="tbl-wrap"><table class="tbl"><thead><tr>
-      <th>Cliente</th><th class="center">Lançamentos</th><th class="right">⬇️ Entradas</th><th class="right">⬆️ Saídas</th><th class="right">Líquido</th><th class="right">Última</th>
+      ${thSort('capCli', 'nome', 'Cliente')}${thSort('capCli', 'n', 'Lançamentos', 'center')}${thSort('capCli', 'entrada', '⬇️ Entradas', 'right')}${thSort('capCli', 'saida', '⬆️ Saídas', 'right')}${thSort('capCli', 'liquido', 'Líquido', 'right')}${thSort('capCli', 'ultima', 'Última', 'right')}
     </tr></thead><tbody>${clientesOrd.map(g => `<tr class="click" data-cap-cli="${esc(g.chave)}" title="Clique para ver os lançamentos datados">
       <td><b>${esc(g.nome)}</b></td>
       <td class="center mono">${g.n}</td>
@@ -5292,8 +5293,8 @@ function renderCaptacao(mk) {
     <p class="small muted mt">Clique num cliente para ver os lançamentos separados por data.</p>`;
   } else {
     lista = `<div class="tbl-wrap"><table class="tbl"><thead><tr>
-      <th>Data</th><th></th><th>Cliente</th><th>Operação</th><th class="center">NNM</th><th class="right">Valor</th>
-    </tr></thead><tbody>${detalhe.map(c => `<tr class="click" data-cap="${c.id}">
+      ${thSort('capDet', 'data', 'Data')}${thSort('capDet', 'tipo', '')}${thSort('capDet', 'nomeOrd', 'Cliente')}${thSort('capDet', 'operacao', 'Operação')}${thSort('capDet', 'nnmOrd', 'NNM', 'center')}${thSort('capDet', 'valorOrd', 'Valor', 'right')}
+    </tr></thead><tbody>${(() => { const st = sortState('capDet', 'data'); return detalhe.map(c => ({ ...c, nomeOrd: nomeRef(c), nnmOrd: c.nnm ? 1 : 0, valorOrd: ehSaida(c) ? -c.valor : c.valor })).sort(cmpBy(st.col, st.dir)); })().map(c => `<tr class="click" data-cap="${c.id}">
       <td class="mono">${fmtDate(c.data)}</td>
       <td>${ehSaida(c) ? '<span class="chip chip-d">⬆️ saída</span>' : '<span class="chip chip-a">⬇️ entrada</span>'}</td>
       <td><b>${esc(nomeRef(c))}</b></td>
@@ -5326,6 +5327,7 @@ function renderCaptacao(mk) {
 function wireCaptacao(el) {
   const seg = el.querySelector('#seg-cap-visao');
   if (!seg) return;
+  wireSort(el); // toque no título da coluna ordena (de novo = inverte)
   seg.querySelectorAll('button').forEach(b => b.onclick = () => { UI.capVisao = b.getAttribute('data-v'); renderApp(); });
   el.querySelectorAll('#seg-cap-periodo button').forEach(b => b.onclick = () => { UI.capPeriodo = b.getAttribute('data-p'); renderApp(); });
   el.querySelectorAll('[data-cap-cli]').forEach(tr => tr.onclick = () => {
@@ -5386,7 +5388,8 @@ function renderReceita(mk) {
   };
   for (const a of alocsP) if (a.classe) addCli(chaveClienteCap(a), nomeRef(a), 'pontual', a.receita, a.data);
   for (const x of posRec) if (x.val > 0) addCli(chaveClienteCap(x.p), nomeRef(x.p), 'recorrente', x.val, x.p.inicio);
-  const clisOrd = Object.values(porCli).sort((a, b) => (b.pontual + b.recorrente) - (a.pontual + a.recorrente));
+  const stRecCli = sortState('recCli', 'total');
+  const clisOrd = Object.values(porCli).map(g => ({ ...g, total: g.pontual + g.recorrente })).sort(cmpBy(stRecCli.col, stRecCli.dir));
 
   const quadros = `<div class="grid g3 mb">
     <div class="card kpi"><div class="kpi-label">Resumo — ${esc(tituloPeriodo)}${mesFuturo ? ' 🔮 previsão' : ''}</div>
@@ -5460,7 +5463,7 @@ function renderReceita(mk) {
     <p class="small muted mt">${nivel2 ? 'Mostrando as características de <b>' + esc((ativosFiltro.find(x => x.chave === UI.recAtivoSel) || {}).rotulo || '') + '</b> — compare emissor e classe para ver qual rende mais.' : 'Ordenado pela maior receita. Escolha um <b>ativo</b> no filtro para abrir por característica/emissor.'} Retorno % = receita ÷ valor aplicado${periodo === 'mes' ? ' (recorrentes: receita do mês ÷ saldo)' : ''}.</p>`;
   } else if (UI.recVisao === 'cliente') {
     lista = `<div class="tbl-wrap"><table class="tbl"><thead><tr>
-      <th>Cliente</th><th class="center">Lançamentos</th><th class="right">⚡ Pontual</th><th class="right">🔁 Recorrente</th><th class="right">Receita total</th><th class="right">Última</th>
+      ${thSort('recCli', 'nome', 'Cliente')}${thSort('recCli', 'n', 'Lançamentos', 'center')}${thSort('recCli', 'pontual', '⚡ Pontual', 'right')}${thSort('recCli', 'recorrente', '🔁 Recorrente', 'right')}${thSort('recCli', 'total', 'Receita total', 'right')}${thSort('recCli', 'ultima', 'Última', 'right')}
     </tr></thead><tbody>${clisOrd.map(g => `<tr class="click" data-rec-cli="${esc(g.chave)}" title="Clique para ver os lançamentos datados">
       <td><b>${esc(g.nome)}</b></td>
       <td class="center mono">${g.n}</td>
@@ -5479,9 +5482,10 @@ function renderReceita(mk) {
     ].sort((a, b) => String(b.data).localeCompare(String(a.data)));
     if (UI.recCliente) linhas = linhas.filter(l => l.cli === UI.recCliente);
     if (UI.recAtivo) linhas = linhas.filter(l => l.atv === UI.recAtivo);
+    { const st = sortState('recDet', 'data'); linhas = linhas.sort(cmpBy(st.col, st.dir)); }
     const totalFiltro = somar(linhas, l => l.receitaVal); // soma exatamente o que está na tela
     lista = `<div class="tbl-wrap"><table class="tbl"><thead><tr>
-      <th>Data</th><th>Cliente</th><th>Produto</th><th class="right">Valor aplicado</th><th class="right">Receita no período</th>
+      ${thSort('recDet', 'data', 'Data')}${thSort('recDet', 'nome', 'Cliente')}${thSort('recDet', 'produto', 'Produto')}${thSort('recDet', 'aplicado', 'Valor aplicado', 'right')}${thSort('recDet', 'receitaVal', 'Receita no período', 'right')}
     </tr></thead><tbody>${linhas.map(l => `<tr class="click" data-rec-item="${l.chave}">
       <td class="mono small">${l.dataTxt}</td>
       <td><b>${esc(nomeExib(l))}</b></td>
@@ -5533,6 +5537,7 @@ function renderReceita(mk) {
 function wireReceita(el) {
   const seg = el.querySelector('#seg-rec-visao');
   if (!seg) return;
+  wireSort(el);
   seg.querySelectorAll('button').forEach(b => b.onclick = () => { UI.recVisao = b.getAttribute('data-v'); renderApp(); });
   el.querySelectorAll('#seg-rec-periodo button').forEach(b => b.onclick = () => { UI.recPeriodo = b.getAttribute('data-p'); renderApp(); });
   el.querySelectorAll('#seg-rec-tipo button').forEach(b => b.onclick = () => { UI.recTipo = b.getAttribute('data-rt'); renderApp(); });
