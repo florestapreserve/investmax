@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="InvestMax">
 <link rel="apple-touch-icon" href="icon-180.png">
-<script>window.__APPVER__ = "investmax-v33 \u00b7 11/11 11:06";</script>
+<script>window.__APPVER__ = "investmax-v34 \u00b7 24/11 23:02";</script>
 <style>
 /* ============ InvestMax — design system (tema claro) ============ */
 :root {
@@ -557,6 +557,19 @@ textarea { resize: vertical; min-height: 70px; }
   .modal-foot .btn { flex: 1 1 calc(50% - 4px); min-height: 44px; white-space: normal; justify-content: center; text-align: center; }
   .modal-foot .btn-primary { flex-basis: 100%; order: -1; }
   .modal-foot .btn-danger { order: 9; }
+}
+
+/* ===== Dashboard: régua em quadradinhos ===== */
+.rq-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.rq { font: inherit; border: 0; border-radius: 14px; padding: 12px 8px; min-height: 96px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; cursor: pointer; color: #0b0b0b; min-width: 0; }
+.rq:hover { filter: brightness(1.05); box-shadow: 0 3px 8px rgba(11,11,11,.12); }
+.rq-l { font-size: 12px; font-weight: 650; color: rgba(11,11,11,.75); text-align: center; line-height: 1.2; }
+.rq-n { font-size: 32px; font-weight: 750; line-height: 1.05; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.rq-s { font-size: 11px; color: rgba(11,11,11,.62); text-align: center; line-height: 1.2; }
+@media (max-width: 640px) {
+  .rq-grid { gap: 6px; }
+  .rq { padding: 9px 3px; min-height: 84px; border-radius: 12px; }
+  .rq-l { font-size: 10.5px; } .rq-n { font-size: 24px; } .rq-s { font-size: 10px; }
 }
 
 </style>
@@ -2523,6 +2536,23 @@ Pages.dashboard = {
     const presas = captacoesPresasPatrimonio();
     const totalPresas = totalPresasReal(); // mudança REAL no patrimônio (respeita o piso em 0)
 
+    /* 📏 régua em quadradinhos: quantos clientes em cada faixa de dias sem contato (toque = lista de quem ligar) */
+    const fr = S.config.reguaFaixas;
+    const bandaDe = d => d == null ? 4 : d <= fr.A ? 0 : d <= fr.B ? 1 : d <= fr.C ? 2 : d <= fr.D ? 3 : 4;
+    const RQ_LABELS = [`até ${fr.A} dias`, `${fr.A + 1} a ${fr.B} dias`, `${fr.B + 1} a ${fr.C} dias`, `${fr.C + 1} a ${fr.D} dias`, `+${fr.D} dias`];
+    const rqGrupos = [[], [], [], [], []];
+    for (const c of S.clientes) { const uc = ultimoContato(c.id, null); rqGrupos[bandaDe(uc.dias)].push({ c, dias: uc.dias, pat: clientePatrimonio(c) }); }
+    const rqOrdem = [4, 3, 2, 1, 0]; // pior primeiro: quem mais precisa de ligação fica à esquerda
+    const reguaQuadHTML = `<div class="card rq-card">
+      <div class="card-title">📏 Régua de relacionamento <span class="small muted">— toque para ver quem contatar</span><span class="spacer"></span><a href="#/regua" class="small">régua completa ›</a></div>
+      <div class="rq-grid">${rqOrdem.map(i => {
+        const g = rqGrupos[i], nunca = g.filter(x => x.dias == null).length;
+        return `<button type="button" class="rq band-${i}" data-rq="${i}">
+          <span class="rq-l">${esc(RQ_LABELS[i])}</span>
+          <span class="rq-n">${g.length}</span>
+          <span class="rq-s">cliente${g.length === 1 ? '' : 's'}${i === 4 && nunca ? ' · ' + nunca + ' nunca' : ''}</span></button>`;
+      }).join('')}</div></div>`;
+
     /* 📌 pendências do dia: vencendo hoje + atrasadas */
     const pendAbertas = (typeof pendenciasAbertas === 'function' ? pendenciasAbertas() : (S.pendencias || []).filter(p => !p.feito));
     const pendDia = pendAbertas.filter(p => p.prazo && p.prazo <= h).sort((a, b) => String(a.prazo).localeCompare(String(b.prazo)));
@@ -2605,7 +2635,7 @@ Pages.dashboard = {
       (window.Sync && !Sync.ativo() ? `<div class="warn-banner" id="banner-sync">☁️ <div><b>Seus dados estão só neste aparelho.</b> Ligue a sincronização para o celular e o iPad ficarem sempre iguais (cifrado — ninguém mais lê). <i>É uma vez só em cada aparelho.</i>
         <div class="row wrap" style="margin-top:8px;gap:8px"><button class="btn btn-sm btn-primary" id="sync-ativar">☁️ Este é o aparelho com os dados certos — ativar</button><button class="btn btn-sm" id="sync-entrar">🔑 Já ativei no outro — tenho o código</button></div></div></div>` : '')
         );
-        return `<div class="dash-topo">${alertas ? `<div class="dash-alertas">${alertas}</div>` : ''}${pendDiaHTML}</div>`;
+        return `<div class="dash-topo">${alertas ? `<div class="dash-alertas">${alertas}</div>` : ''}${reguaQuadHTML}${pendDiaHTML}</div>`;
       })() +
 
       bentoHTML +
@@ -2705,6 +2735,23 @@ Pages.dashboard = {
           : `<div class="empty">Registre contatos com <b>assuntos</b> (no 💬 Registrar contato) para ver aqui o que você mais trata${aper === 'mes' ? ' — ou veja <b>Tudo</b>' : ''}.</div>`}</div>`;
 
     wireMesNav(el);
+    el.querySelectorAll('[data-rq]').forEach(b => b.onclick = () => { // lista de quem está naquela faixa, maior patrimônio primeiro
+      const i = +b.getAttribute('data-rq');
+      const lista = rqGrupos[i].slice().sort((x, y) => (y.dias == null) - (x.dias == null) || (y.dias || 0) - (x.dias || 0) || y.pat - x.pat);
+      openModal({
+        title: '📏 ' + esc(RQ_LABELS[i]) + ' sem contato — ' + lista.length + ' cliente' + (lista.length === 1 ? '' : 's'),
+        body: lista.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>${lista.map(x => `<tr class="click" data-rq-cli="${x.c.id}">
+            <td><b>${esc(nomeExib(x.c))}</b><div class="small muted">${x.dias == null ? 'nunca contatado' : x.dias + ' dias sem contato'}</div></td>
+            <td class="num">${fmtCompact(x.pat)}</td>
+            <td class="right"><button class="btn btn-sm" data-rq-ct="${x.c.id}" aria-label="Registrar contato">💬</button></td></tr>`).join('')}</tbody></table></div>`
+          : '<div class="empty">Ninguém nesta faixa. 👏</div>',
+        footer: `<span class="spacer"></span><button class="btn" onclick="closeModal()">Fechar</button>`,
+        onOpen(m) {
+          m.querySelectorAll('[data-rq-ct]').forEach(x => x.onclick = e => { e.stopPropagation(); modalRegistrarContato(x.getAttribute('data-rq-ct'), 'whatsapp', () => closeAllModals()); });
+          m.querySelectorAll('[data-rq-cli]').forEach(tr => tr.onclick = () => { closeAllModals(); nav('clientes/' + tr.getAttribute('data-rq-cli')); });
+        },
+      });
+    });
     el.querySelectorAll('[data-pend-dia]').forEach(x => x.onclick = () => modalPendencia(x.getAttribute('data-pend-dia')));
     if (window.Sync && !Sync.ativo()) Sync.wireCard(el); // botões do aviso de sincronização
     const kpiCap = el.querySelector('#dash-kpi-cap');
